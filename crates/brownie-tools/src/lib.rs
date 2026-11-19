@@ -943,9 +943,11 @@ fn run_bounded_git_process_observed(
     });
 
     if let Err(error) = before_poll(&mut child) {
-        let _ = terminate_git_process_tree(&mut child);
-        let _ = join_capture_with_status(stdout_handle);
-        let _ = join_capture_with_status(stderr_handle);
+        let (_, reason) = terminate_git_process_tree(&mut child);
+        let mut group_present =
+            process_tree_timeout_supported() && reason != "process_tree_already_exited";
+        let _ = join_capture_with_status(stdout_handle, child.id(), &mut group_present);
+        let _ = join_capture_with_status(stderr_handle, child.id(), &mut group_present);
         return Err(error);
     }
 
@@ -992,8 +994,12 @@ fn run_bounded_git_process_observed(
         }
     };
 
-    let (stdout_capture, stdout_joined) = join_capture_with_status(stdout_handle);
-    let (stderr_capture, stderr_joined) = join_capture_with_status(stderr_handle);
+    let mut group_present = process_tree_timeout_supported()
+        && process_tree_kill_reason != "process_tree_already_exited";
+    let (stdout_capture, stdout_joined) =
+        join_capture_with_status(stdout_handle, child.id(), &mut group_present);
+    let (stderr_capture, stderr_joined) =
+        join_capture_with_status(stderr_handle, child.id(), &mut group_present);
     let mut combined = stdout_capture.content;
     let remaining = MAX_GIT_CAPTURE_BYTES.saturating_sub(combined.len());
     combined
@@ -2321,20 +2327,45 @@ fn join_capture(handle: Option<ProcessCaptureHandle>) -> ProcessCapture {
     finish_capture(handle, VERIFICATION_CAPTURE_JOIN_TIMEOUT_MS).0
 }
 
-fn join_capture_with_status(handle: Option<ProcessCaptureHandle>) -> (ProcessCapture, bool) {
-    finish_capture(handle, GIT_CAPTURE_JOIN_TIMEOUT_MS)
+fn join_capture_with_status(
+    handle: Option<ProcessCaptureHandle>,
+    owned_group: u32,
+    group_present: &mut bool,
+) -> (ProcessCapture, bool) {
+    finish_capture_with_cleanup(handle, GIT_CAPTURE_JOIN_TIMEOUT_MS, || {
+        if *group_present {
+            // A descendant can fork while the first group signal is delivered.
+            // Drain remaining owned pipe holders while preserving the original
+            // reader deadline. Stop signaling once this group no longer exists.
+            let (_, reason) = terminate_process_tree(owned_group);
+            *group_present = reason != "process_tree_already_exited";
+        }
+    })
 }
 
 fn finish_capture(handle: Option<ProcessCaptureHandle>, timeout_ms: u64) -> (ProcessCapture, bool) {
+    finish_capture_with_cleanup(handle, timeout_ms, || {})
+}
+
+fn finish_capture_with_cleanup(
+    handle: Option<ProcessCaptureHandle>,
+    timeout_ms: u64,
+    mut cleanup: impl FnMut(),
+) -> (ProcessCapture, bool) {
     let Some(handle) = handle else {
         return (ProcessCapture::empty(), true);
     };
     let deadline = Instant::now() + Duration::from_millis(timeout_ms);
-    let Ok(capture) = handle
-        .receiver
-        .recv_timeout(Duration::from_millis(timeout_ms))
-    else {
-        return (ProcessCapture::empty(), false);
+    let capture = loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        match handle
+            .receiver
+            .recv_timeout(remaining.min(Duration::from_millis(10)))
+        {
+            Ok(capture) => break capture,
+            Err(mpsc::RecvTimeoutError::Timeout) if Instant::now() < deadline => cleanup(),
+            Err(_) => return (ProcessCapture::empty(), false),
+        }
     };
     // Receiving a message is not a thread join. Preserve the same deadline
     // and only report joined once the actual reader thread has terminated.
@@ -7592,6 +7623,50 @@ printf '%s\n' '?? normal.txt'
 
     #[cfg(unix)]
     #[test]
+    fn git_capture_wait_drains_owned_pipe_holders_after_initial_cleanup() {
+        let mut command = Command::new("/bin/sh");
+        command
+            .args(["-c", "/bin/sleep 30 & printf R; wait"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        configure_process_tree_timeout(&mut command);
+        let mut child = command.spawn().expect("owned pipe holder");
+        let mut stdout = child.stdout.take().expect("stdout");
+        let mut ready = [0];
+        stdout
+            .read_exact(&mut ready)
+            .expect("fixture ready barrier");
+        assert_eq!(ready, [b'R']);
+        let total = Arc::new(AtomicUsize::new(0));
+        let oversized = Arc::new(AtomicBool::new(false));
+        let stdout = capture_pipe_async_bounded(
+            stdout,
+            MAX_GIT_CAPTURE_BYTES,
+            Arc::clone(&total),
+            Arc::clone(&oversized),
+        );
+        let stderr = capture_pipe_async_bounded(
+            child.stderr.take().expect("stderr"),
+            MAX_GIT_CAPTURE_BYTES,
+            total,
+            oversized,
+        );
+        // Model an owned pipe holder that survived the initial cleanup. The
+        // ready barrier makes this deterministic rather than racing a fork.
+        let mut group_present = true;
+        let (_, stdout_joined) =
+            join_capture_with_status(Some(stdout), child.id(), &mut group_present);
+        let (_, stderr_joined) =
+            join_capture_with_status(Some(stderr), child.id(), &mut group_present);
+        // Clean up even when checking the pre-fix behavior.
+        let _ = terminate_git_process_tree(&mut child);
+        assert!(stdout_joined && stderr_joined);
+        assert!(!process_exists(child.id()));
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn git_status_repeated_timeout_and_oversize_do_not_accumulate_processes_or_threads() {
         let _lock = git_test_env_lock();
         for scenario in ["timeout", "oversized_no_newline"] {
@@ -7610,11 +7685,19 @@ printf '%s\n' '?? normal.txt'
                         result.output["process_tree_kill_reason"],
                         "process_not_launched"
                     );
-                    assert_eq!(result.output["reader_thread_joined"], true);
+                    assert_eq!(
+                        result.output["reader_thread_joined"], true,
+                        "{scenario} attempt {attempt}: {}",
+                        result.output
+                    );
                     continue;
                 }
                 assert_fake_git_cleanup(&result.output);
-                assert_eq!(result.output["reader_thread_joined"], true);
+                assert_eq!(
+                    result.output["reader_thread_joined"], true,
+                    "{scenario} attempt {attempt}: {}",
+                    result.output
+                );
                 let pid_file = if scenario == "timeout" {
                     "git-timeout.pid"
                 } else {
