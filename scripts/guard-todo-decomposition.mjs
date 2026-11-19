@@ -643,7 +643,19 @@ function validateLeafBlock(block, errors, options = {}) {
   if (route === 'documentation' && scopes.some((target) => !target.startsWith('docs/') && target !== '.brownie/todo.md')) {
     errors.push(`${owner}: documentation leaves may only patch docs/ targets or the TODO queue.`);
   }
-  if (route === 'implementation' && scopes.some((target) => target.startsWith('docs/'))) {
+  // Generated hash companions are part of the source change's verification,
+  // but arbitrary documentation remains a separate delivery scope.
+  const generatedCompanions = [
+    'docs/architecture/runtime-release-readiness-audit.json',
+    'docs/architecture/runtime-release-contract.json'
+  ];
+  const docScopes = scopes.filter((target) => target.startsWith('docs/'));
+  const generatedCompanionContract = docScopes.length === 2
+    && generatedCompanions.every((target) => docScopes.includes(target))
+    && scopes.some((target) => !target.startsWith('docs/'))
+    && completionLines(block).join(' ').includes('Only safety_readiness_evidence_invalidation.tracked_fingerprint and commit_trace.readiness_audit_content_sha256 may change in the two generated documents.')
+    && verificationCommands.includes('node scripts/update-runtime-release-readiness-audit.mjs --check');
+  if (route === 'implementation' && docScopes.length > 0 && !generatedCompanionContract) {
     errors.push(`${owner}: implementation leaves must not patch docs/ targets.`);
   }
   validateTodoContract(block, errors, options);
