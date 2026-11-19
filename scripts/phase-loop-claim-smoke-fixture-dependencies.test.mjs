@@ -12,6 +12,74 @@ const claimSmokeFixture = path.join(scriptsDirectory, 'phase-loop-claim-smoke.te
 const todoStateEntry = path.join(scriptsDirectory, 'phase-loop-todo-state.mjs');
 const todoGuardEntry = path.join(scriptsDirectory, 'guard-todo-decomposition.mjs');
 
+test('claim-smoke finalization rejects swallowed failures and incomplete command evidence', () => {
+  const source = fs.readFileSync(claimSmokeFixture, 'utf8');
+  const extract = (name) => {
+    const start = source.indexOf(`${name}() {\n`);
+    assert.notEqual(start, -1, `missing production fixture function ${name}`);
+    const end = source.indexOf('\n}\n', start);
+    assert.notEqual(end, -1);
+    return source.slice(start, end + 3);
+  };
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-command-contract-'));
+  try {
+    const helper = path.join(fixture, 'finalize.sh');
+    fs.writeFileSync(helper, `${extract('validate_claim_smoke_command_results')}\n${extract('cleanup_phase_loop_test_control_root')}\n`);
+    const cases = [
+      { expected: '0', actual: 0, accepted: true },
+      { expected: '78', actual: 78, accepted: true },
+      { expected: '0,76', actual: 0, accepted: true },
+      { expected: '0,76', actual: 76, accepted: true },
+      { expected: '0', actual: 78, accepted: false },
+      { expected: '78', actual: 0, accepted: false },
+      { expected: '78', actual: 124, accepted: false },
+      { expected: '0', actual: 78, accepted: false, mutate: 'accepted' },
+      { expected: '0', actual: 0, accepted: false, mutate: 'unfinished' },
+      { expected: '0', actual: 0, accepted: false, mutate: 'malformed' },
+      { expected: '0', actual: 0, accepted: false, mutate: 'empty' },
+      { expected: '0', actual: 0, accepted: false, mutate: 'contract' },
+      { expected: '0', actual: 78, accepted: false, priorFailure: 41 },
+    ];
+    for (const [index, row] of cases.entries()) {
+      const audit = path.join(fixture, `${index}.jsonl`);
+      const control = path.join(fixture, `control-${index}`);
+      fs.mkdirSync(control);
+      const result = spawnSync('bash', ['-c', String.raw`
+source "$1"
+source "$2"
+export PHASE_LOOP_CLAIM_SMOKE_AUDIT_FILE="$3"
+export PHASE_LOOP_CLAIM_SMOKE_SECTION=contract-regression
+export PHASE_LOOP_TEST_CONTROL_ROOT="$4"
+export PHASE_LOOP_CLAIM_SMOKE_SHARD_NAME=contract-regression
+unset PHASE_LOOP_TEST_RUNTIME CLAIM_SMOKE_BROWNIE_STORE_ROOT PHASE_LOOP_CLAIM_SMOKE_LIVENESS_FILE
+trap cleanup_phase_loop_test_control_root EXIT
+phase_loop_claim_smoke_run_with_timeout 5 --expected-exit "$5" bash -c 'exit "$1"' fixture "$6" >/dev/null 2>/dev/null || true
+if [ -n "$7" ]; then
+  node - "$3" "$7" <<'NODE' || exit 97
+const fs = require('node:fs');
+const [file, mutation] = process.argv.slice(2);
+const rows = fs.readFileSync(file, 'utf8').trim().split('\n').map(JSON.parse);
+if (mutation === 'accepted') rows.at(-1).accepted = true;
+if (mutation === 'unfinished') rows.pop();
+if (mutation === 'empty') rows.length = 0;
+if (mutation === 'contract') rows[0].expected_exit_codes = [78];
+fs.writeFileSync(file, rows.map(row => JSON.stringify(row)).join('\n') + '\n' + (mutation === 'malformed' ? '{broken\n' : ''));
+NODE
+fi
+exit "$8"
+`, 'fixture', path.join(scriptsDirectory, 'phase-loop-claim-smoke-scheduler.sh'), helper,
+      audit, control, row.expected, String(row.actual), row.mutate ?? '', String(row.priorFailure ?? 0)],
+      { encoding: 'utf8', timeout: 15000 });
+      assert.equal(result.error, undefined, JSON.stringify(row));
+      assert.equal(result.status, row.priorFailure ?? (row.accepted ? 0 : 98), `${JSON.stringify(row)}\n${result.stderr}`);
+      assert.equal(result.stdout.includes('phase-loop claim smoke passed'), row.accepted, JSON.stringify(row));
+      assert.equal(fs.existsSync(control), false, 'fixture cleanup still runs');
+    }
+  } finally {
+    fs.rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
 function localDependencyClosure(entry, visited = new Set()) {
   const absoluteEntry = path.resolve(entry);
   if (visited.has(absoluteEntry)) return visited;
