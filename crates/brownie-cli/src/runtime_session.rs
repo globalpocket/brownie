@@ -235,14 +235,22 @@ mod tests {
     fn response_timeout_ends_the_owned_child_and_does_not_replay_the_request() {
         let root = peer("session_timeout.py");
         let mut session = Session::default();
-        session
+        let pid: u32 = session
             .send(&root.path().join("peer"), "warm", Duration::from_secs(2))
+            .unwrap()
+            .parse()
             .unwrap();
         assert_eq!(
             session.send(&root.path().join("peer"), "{}", Duration::from_millis(200)),
             Err(RuntimeClientError::TimedOut)
         );
         assert!(session.process.is_none());
+        assert!(!Command::new("/bin/kill")
+            .args(["-0", &pid.to_string()])
+            .stderr(Stdio::null())
+            .status()
+            .unwrap()
+            .success());
         assert_eq!(
             std::fs::read_to_string(root.path().join("calls")).unwrap(),
             "one\n"
