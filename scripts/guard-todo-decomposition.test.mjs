@@ -960,3 +960,20 @@ test('adversarial decomposition fixtures fail for the expected reason', () => {
     );
   }
 });
+
+
+test('implementation admits only the declared generated hash companion pair', () => {
+  const pair = ['docs/architecture/runtime-release-readiness-audit.json', 'docs/architecture/runtime-release-contract.json'];
+  const leaf = validLeaf.replace('`scripts/example.mjs`:', '`scripts/example.mjs`, ' + pair.map(p => '`' + p + '`').join(', ') + ':')
+    .replace('the bounded patch is implemented and verified.', 'Only safety_readiness_evidence_invalidation.tracked_fingerprint and commit_trace.readiness_audit_content_sha256 may change in the two generated documents.')
+    .replace('pnpm --workspace-root guard:release-contract:test', 'node scripts/update-runtime-release-readiness-audit.mjs --check');
+  const routeErrors = text => validateTodoDecompositionText(text).filter(e => e.includes('implementation leaves must not'));
+  assert.deepEqual(routeErrors(leaf), []);
+  for (const invalid of [leaf.replace(pair[0], 'docs/unrelated.json'),
+    leaf.replace(', `' + pair[1] + '`', ''),
+    leaf.replace('Only safety_readiness', 'Possibly safety_readiness'),
+    leaf.replace(' --check', ''),
+    leaf.replace('`scripts/example.mjs`', '`docs/extra.json`')]) {
+    assert.equal(routeErrors(invalid).length, 1);
+  }
+});
