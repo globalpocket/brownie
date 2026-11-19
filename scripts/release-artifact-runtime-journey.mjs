@@ -1,3 +1,4 @@
+import { extractReleaseArchive } from './release-artifact-extract.mjs';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -46,16 +47,7 @@ function findFile(root, fileName) {
   return null;
 }
 
-function extractArchive(target, archivePath, extractionRoot) {
-  const result = target.archiveType === 'tar'
-    ? run('tar', ['-xzf', archivePath, '-C', extractionRoot])
-    : process.platform === 'win32'
-      ? run('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', `Expand-Archive -LiteralPath '${archivePath.replaceAll("'", "''")}' -DestinationPath '${extractionRoot.replaceAll("'", "''")}' -Force`])
-      : run('unzip', ['-q', archivePath, '-d', extractionRoot]);
-  if (result.status !== 0) {
-    throw new Error(`could not extract ${target.archiveName}: ${result.stderr || result.stdout}`);
-  }
-}
+const extractArchive = extractReleaseArchive;
 
 function parseChecksums(filePath) {
   const checksums = {};
