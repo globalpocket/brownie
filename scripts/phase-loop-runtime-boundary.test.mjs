@@ -641,6 +641,13 @@ test('Runtime patch disambiguation never infers queue occurrence from project fe
   assert.doesNotMatch(source.slice(start, end), /todo\.md|duplicate unchecked todo|"occurrence": 2/u);
 });
 
+test('Runtime never rewrites inline project TODO metadata before proposal creation', () => {
+  for (const filename of ['lib.rs', 'controlled_tool_execution.rs']) {
+    const source = fs.readFileSync(path.join(repoRoot, 'crates/brownie-runtime/src', filename), 'utf8');
+    assert.doesNotMatch(source, /normalize_todo_md_workspace_write_input|normalize_inline_todo_leaf|selected_todo_route_from_goal/u);
+  }
+});
+
 test('Runtime read admission uses typed constraints without project prompt interpretation', () => {
   const source = fs.readFileSync(path.join(repoRoot, 'crates/brownie-runtime/src/controlled_tool_execution.rs'), 'utf8');
   const start = source.indexOf('fn workspace_read_intent_runtime_rejection_reason(');

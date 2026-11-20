@@ -14158,8 +14158,6 @@ fn append_workspace_patch_proposal(
         proposal_input =
             normalize_json_line_block_patch_input_from_target(store, path, &proposal_input);
     }
-    proposal_input =
-        controlled_tool_execution::normalize_todo_md_workspace_write_input(record, &proposal_input);
     if let Some(reason) =
         controlled_tool_execution::todo_md_workspace_write_rejection_reason(record, &proposal_input)
     {

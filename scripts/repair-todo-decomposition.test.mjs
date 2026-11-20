@@ -1955,3 +1955,14 @@ for (const mode of ['stale_claim', 'live_selected', 'mixed_live_and_missing', 'm
     } finally { fs.rmSync(root, {recursive:true,force:true}); }
   });
 }
+
+// Migrated from the former Runtime inline-leaf normalization test. The
+// controller rejects malformed material; Runtime must not invent its route.
+test('external decomposition rejects the original inline blocker instead of inventing metadata', () => {
+  const selected = "- [ ] E-15e-release-readiness-audit-sync-leaf: Patch only `docs/architecture/runtime-release-readiness-audit.json`:\n  Route: documentation.\n  Source TODO: E-15e-release-contract-audit-phase-resync.\n  Depends on: E-15e-release-contract-doc-sync-leaf.\n  Completion condition: runtime release readiness audit records the current fail-closed evidence state without claiming Runtime Product Ready.\n  Forbidden changes: do not mark Runtime Product Ready and do not remove owner-controlled independent review blockers.\n  Verification: run `pnpm --workspace-root guard:runtime-release-readiness`.\n";
+  const inline = "- [ ] E-15e-release-readiness-audit-sync-blocker: Blocker: cannot patch `docs/architecture/runtime-release-readiness-audit.json` without a safe exact old_text. Source TODO: E-15e-release-contract-audit-phase-resync. Depends on: E-15e-release-contract-doc-sync-leaf. Completion condition: runtime release readiness audit records the current fail-closed evidence state without claiming Runtime Product Ready. Forbidden changes: do not mark Runtime Product Ready and do not remove owner-controlled independent review blockers. Verification: run `pnpm --workspace-root guard:runtime-release-readiness` and inspect `docs/architecture/runtime-release-readiness-audit.json` for the required section.\n";
+  const hunk = { old_text: selected.trimEnd(), new_text: inline };
+  assert.throws(() => validateDecompositionTransition(selected, selected, [hunk]), /parent lineage/u);
+  assert.equal(hunk.new_text, inline);
+  assert.equal(hunk.new_text.includes('Route:'), false);
+});

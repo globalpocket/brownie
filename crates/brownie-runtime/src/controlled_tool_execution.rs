@@ -2525,10 +2525,7 @@ pub(super) fn append_tool_intent_events(
             Some(json!({ "tool_id": tool_id, "reason": metadata_privacy::redact_text(&rejected.reason), "code": rejected.code })),
         )?;
     }
-    for mut decision in evaluation.items {
-        if decision.tool_id == WORKSPACE_WRITE_TOOL_ID {
-            decision.input = normalize_todo_md_workspace_write_input(record, &decision.input);
-        }
+    for decision in evaluation.items {
         let runtime_plan_rejection_reason = if decision.allowed
             && builtin_tool_missing_from_runtime_plan(&decision.tool_id, &planned_allowed_tool_ids)
         {
@@ -2641,10 +2638,7 @@ pub(super) fn handle_approved_workspace_intents(
             }
             None => false,
         };
-    for (intent_index, mut decision) in evaluation.items.into_iter().enumerate() {
-        if decision.tool_id == WORKSPACE_WRITE_TOOL_ID {
-            decision.input = normalize_todo_md_workspace_write_input(record, &decision.input);
-        }
+    for (intent_index, decision) in evaluation.items.into_iter().enumerate() {
         let builtin_controlled_execution_tool = matches!(
             decision.tool_id.as_str(),
             WORKSPACE_READ_TOOL_ID
@@ -2907,143 +2901,6 @@ pub(super) fn todo_md_workspace_write_rejection_reason(
         return Some(
             "Selected implementation TODO names a concrete non-todo workspace target; do not rewrite the live TODO queue as implementation progress. Edit the named file or fail closed.",
         );
-    }
-    None
-}
-
-pub(super) fn normalize_todo_md_workspace_write_input(
-    record: &brownie_protocol::TaskRecord,
-    input: &Value,
-) -> Value {
-    if record.execution_constraints.is_some() {
-        return input.clone();
-    }
-    let Some(path) = input.get("path").and_then(Value::as_str) else {
-        return input.clone();
-    };
-    if !is_todo_workspace_path(path) {
-        return input.clone();
-    }
-    let mut normalized = input.clone();
-    let Some(object) = normalized.as_object_mut() else {
-        return input.clone();
-    };
-    for key in ["new_text", "content"] {
-        let Some(raw) = object.get(key).and_then(Value::as_str) else {
-            continue;
-        };
-        let fixed = normalize_inline_todo_leaf_text(record, raw);
-        if fixed != raw {
-            object.insert(key.to_string(), Value::String(fixed));
-        }
-    }
-    normalized
-}
-
-fn normalize_inline_todo_leaf_text(record: &brownie_protocol::TaskRecord, text: &str) -> String {
-    let mut normalized_blocks = Vec::new();
-    let mut changed = false;
-    for block in unchecked_todo_blocks_from_text(text) {
-        let normalized = normalize_inline_todo_leaf_block(record, block);
-        if normalized != block {
-            changed = true;
-        }
-        normalized_blocks.push((block, normalized));
-    }
-    if !changed {
-        return text.to_string();
-    }
-    let mut output = text.to_string();
-    for (old, new) in normalized_blocks {
-        output = output.replacen(old, &new, 1);
-    }
-    output
-}
-
-fn normalize_inline_todo_leaf_block(record: &brownie_protocol::TaskRecord, block: &str) -> String {
-    let line_count = block.lines().count();
-    let contains_inline_markers = [
-        "Source TODO:",
-        "Depends on:",
-        "Completion condition:",
-        "Forbidden changes:",
-        "Verification:",
-    ]
-    .iter()
-    .filter(|marker| block.contains(**marker))
-    .count()
-        >= 2;
-    if line_count > 2 || !contains_inline_markers {
-        return block.to_string();
-    }
-    let Some(first_line) = block.lines().next() else {
-        return block.to_string();
-    };
-    let markers = [
-        "Route:",
-        "Source TODO:",
-        "Depends on:",
-        "Completion condition:",
-        "Forbidden changes:",
-        "Verification:",
-    ];
-    let mut positions: Vec<(usize, &str)> = markers
-        .iter()
-        .filter_map(|marker| first_line.find(marker).map(|index| (index, *marker)))
-        .collect();
-    if positions.is_empty() {
-        return block.to_string();
-    }
-    positions.sort_by_key(|(index, _)| *index);
-    let title_end = positions[0].0;
-    let title = first_line[..title_end].trim_end();
-    if !title.starts_with("- [ ] ") && !title.starts_with("* [ ] ") {
-        return block.to_string();
-    }
-    let mut lines = vec![title.to_string()];
-    if !positions.iter().any(|(_, marker)| *marker == "Route:") {
-        let route = selected_todo_route_from_goal(&record.goal).unwrap_or("documentation");
-        lines.push(format!("  Route: {route}."));
-    }
-    for (idx, (start, marker)) in positions.iter().enumerate() {
-        let end = positions
-            .get(idx + 1)
-            .map(|(next_start, _)| *next_start)
-            .unwrap_or(first_line.len());
-        let value = first_line[*start + marker.len()..end].trim();
-        if value.is_empty() {
-            lines.push(format!("  {marker}"));
-        } else {
-            lines.push(format!("  {marker} {value}"));
-        }
-    }
-    let trailing_lines: Vec<&str> = block.lines().skip(1).collect();
-    for line in trailing_lines {
-        if !line.trim().is_empty() {
-            lines.push(line.to_string());
-        }
-    }
-    let mut result = lines.join("\n");
-    if block.ends_with('\n') {
-        result.push('\n');
-    }
-    result
-}
-
-fn selected_todo_route_from_goal(goal: &str) -> Option<&'static str> {
-    let block = selected_todo_block_text_from_goal(goal)?;
-    for line in block.lines().map(str::trim) {
-        let Some(route) = line.strip_prefix("Route:") else {
-            continue;
-        };
-        let route = route.trim().trim_end_matches('.').to_ascii_lowercase();
-        return match route.as_str() {
-            "implementation" => Some("implementation"),
-            "documentation" => Some("documentation"),
-            "release-ops" => Some("release-ops"),
-            "todo-decomposition" => Some("todo-decomposition"),
-            _ => None,
-        };
     }
     None
 }
@@ -6457,11 +6314,6 @@ mod mcp_approval_lock_tests {
                 todo_md_workspace_write_rejection_reason(&record, &input).is_none(),
                 "typed scope must not be replaced by goal text"
             );
-            assert_eq!(
-                normalize_todo_md_workspace_write_input(&record, &input),
-                input,
-                "the external controller owns project-specific normalization"
-            );
             assert!(todo_md_workspace_write_rejection_reason(
                 &record,
                 &json!({"path":"outside.txt","operation":"patch_file"})
@@ -6510,6 +6362,49 @@ mod mcp_approval_lock_tests {
             std::fs::read_to_string(temp.path().join(".brownie/todo.md")).unwrap(),
             original
         );
+    }
+
+    #[test]
+    fn workspace_proposal_preserves_inline_text_without_inventing_todo_metadata() {
+        for constrained in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let store = BrownieStore::new(temp.path());
+            std::fs::create_dir(temp.path().join(".brownie")).unwrap();
+            let original = "- [ ] leaf: Original text\n";
+            let replacement = "- [ ] leaf: Blocker: fail-closed. Source TODO: parent. Depends on: <none>. Verification: inspect blocker.\n";
+            std::fs::write(temp.path().join(".brownie/todo.md"), original).unwrap();
+            let mut record = test_task_record();
+            record.goal = "Repair `.brownie/todo.md` only; write the exact supplied patch.".into();
+            if constrained {
+                record.execution_constraints = Some(brownie_protocol::TaskExecutionConstraints {
+                    write_paths: Some(vec![".brownie/todo.md".into()]),
+                    write_operations: Some(vec!["patch_file".into()]),
+                    requires_workspace_write_proposal: true,
+                    ..Default::default()
+                });
+            }
+            let intent = json!({"tool_requests":[{"tool_id":WORKSPACE_WRITE_TOOL_ID,"reason":"preserve exact text","input":{"path":".brownie/todo.md","operation":"patch_file","old_text":original,"new_text":replacement}}]});
+            let assistant = format!("```brownie-tool-intent\n{intent}\n```");
+            handle_approved_workspace_intents(&store, &record, &write_policy(), &assistant)
+                .unwrap();
+            let events = store.tasks().read_ledger_events(&record.run_id).unwrap();
+            let proposal = events
+                .iter()
+                .find(|event| event.kind == LedgerEventKind::WorkspacePatchProposed)
+                .unwrap_or_else(|| panic!("proposal must actually be recorded: {events:?}"))
+                .payload
+                .as_ref()
+                .unwrap();
+            assert_eq!(proposal["validation_status"], "Valid");
+            assert_eq!(
+                proposal["hunk_fingerprint"],
+                patch_hunk_fingerprint(original, replacement)
+            );
+            assert_eq!(
+                std::fs::read_to_string(temp.path().join(".brownie/todo.md")).unwrap(),
+                original
+            );
+        }
     }
 
     #[test]
@@ -7675,42 +7570,5 @@ mod mcp_approval_lock_tests {
             reason,
             Some("TODO repair patch must not create duplicate unchecked TODO ids.")
         );
-    }
-
-    #[test]
-    fn todo_md_write_normalizes_inline_blocker_leaf_before_validation() {
-        let mut record = test_task_record();
-        let selected = "- [ ] E-15e-release-readiness-audit-sync-leaf: Patch only `docs/architecture/runtime-release-readiness-audit.json`:\n  Route: documentation.\n  Source TODO: E-15e-release-contract-audit-phase-resync.\n  Depends on: E-15e-release-contract-doc-sync-leaf.\n  Completion condition: runtime release readiness audit records the current fail-closed evidence state without claiming Runtime Product Ready.\n  Forbidden changes: do not mark Runtime Product Ready and do not remove owner-controlled independent review blockers.\n  Verification: run `pnpm --workspace-root guard:runtime-release-readiness`.\n";
-        record.goal =
-            format!("# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n{selected}");
-        let inline_blocker = "- [ ] E-15e-release-readiness-audit-sync-blocker: Blocker: cannot patch `docs/architecture/runtime-release-readiness-audit.json` without a safe exact old_text. Source TODO: E-15e-release-contract-audit-phase-resync. Depends on: E-15e-release-contract-doc-sync-leaf. Completion condition: runtime release readiness audit records the current fail-closed evidence state without claiming Runtime Product Ready. Forbidden changes: do not mark Runtime Product Ready and do not remove owner-controlled independent review blockers. Verification: run `pnpm --workspace-root guard:runtime-release-readiness` and inspect `docs/architecture/runtime-release-readiness-audit.json` for the required section.\n";
-        let input = json!({
-            "path": ".brownie/todo.md",
-            "operation": "patch_file",
-            "old_text": selected,
-            "new_text": inline_blocker,
-        });
-
-        let normalized = normalize_todo_md_workspace_write_input(&record, &input);
-        let normalized_new_text = normalized
-            .get("new_text")
-            .and_then(Value::as_str)
-            .expect("normalized new_text");
-        assert!(normalized_new_text.contains("\n  Route: documentation.\n"));
-        assert!(normalized_new_text
-            .contains("\n  Source TODO: E-15e-release-contract-audit-phase-resync."));
-        assert!(
-            normalized_new_text.contains("\n  Depends on: E-15e-release-contract-doc-sync-leaf.")
-        );
-        assert!(normalized_new_text
-            .contains("\n  Completion condition: runtime release readiness audit records"));
-        assert!(normalized_new_text
-            .contains("\n  Forbidden changes: do not mark Runtime Product Ready"));
-        assert!(normalized_new_text.contains(
-            "\n  Verification: run `pnpm --workspace-root guard:runtime-release-readiness`"
-        ));
-
-        let reason = todo_md_workspace_write_rejection_reason(&record, &normalized);
-        assert!(reason.is_none(), "{reason:?}");
     }
 }
