@@ -622,3 +622,13 @@ test('production Runtime does not contain Brownie TODO planning policy', () => {
     assert.equal(policy.test(production), false, `project policy remains in production Runtime: ${policy}`);
   }
 });
+
+test('Runtime proposal application does not interpret the project TODO queue', () => {
+  const source = fs.readFileSync(path.join(repoRoot, 'crates/brownie-runtime/src/proposal_apply.rs'), 'utf8');
+  const testModule = source.indexOf('#[cfg(test)]\nmod structured_content_post_apply_tests');
+  assert.ok(testModule > 0, 'locate production apply code explicitly');
+  const production = source.slice(0, testModule);
+  for (const policy of [/\.brownie\/todo\.md/u, /todo_queue_post_apply/u, /cyclic Depends on/u]) {
+    assert.equal(policy.test(production), false, `project policy remains in proposal application: ${policy}`);
+  }
+});

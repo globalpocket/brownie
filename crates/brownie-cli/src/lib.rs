@@ -62,6 +62,18 @@ where
 
 fn execute(cli: Cli, client: &RuntimeClient) -> CliOutput {
     match cli.command {
+        CliCommand::WithProposalValidator { path, command } => {
+            match client.clone().with_proposal_validator_file(&path) {
+                Ok(client) => execute(
+                    Cli {
+                        json: cli.json,
+                        command: *command,
+                    },
+                    &client,
+                ),
+                Err(error) => runtime_error_output(error, cli.json, command_name(&command)),
+            }
+        }
         CliCommand::Help { topic } => CliOutput {
             exit_code: ExitCode::Success,
             stdout: topic
@@ -494,6 +506,7 @@ fn error_output_with_reason(
 
 fn command_name(command: &CliCommand) -> &'static str {
     match command {
+        CliCommand::WithProposalValidator { command, .. } => command_name(command),
         CliCommand::Run { .. } => "run",
         CliCommand::RunFile { .. } => "run",
         CliCommand::Resume { .. } => "resume",
@@ -531,6 +544,48 @@ mod tests {
     use crate::cli::{InspectTarget, ListTarget, ModeTarget};
     use crate::runtime_client::RuntimeClientConfig;
     use std::time::Duration;
+
+    #[test]
+    fn proposal_validator_is_explicit_for_run_and_resume() {
+        for args in [
+            vec![
+                "brownie",
+                "--proposal-validator-file",
+                "policy.json",
+                "run",
+                "--file",
+                "goal.md",
+            ],
+            vec![
+                "brownie",
+                "--json",
+                "--proposal-validator-file",
+                "policy.json",
+                "resume",
+            ],
+        ] {
+            assert!(
+                matches!(Cli::parse(args).unwrap().command, CliCommand::WithProposalValidator { path, .. } if path == "policy.json")
+            );
+        }
+        assert!(Cli::parse([
+            "brownie",
+            "--proposal-validator-file",
+            "policy.json",
+            "status"
+        ])
+        .is_err());
+        assert!(Cli::parse(["brownie", "--proposal-validator-file"]).is_err());
+        assert!(Cli::parse([
+            "brownie",
+            "--proposal-validator-file",
+            "a",
+            "--proposal-validator-file",
+            "b",
+            "resume"
+        ])
+        .is_err());
+    }
 
     #[test]
     fn execution_constraints_file_is_explicit_bounded_and_validated() {

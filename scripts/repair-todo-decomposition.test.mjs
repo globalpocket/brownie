@@ -104,6 +104,55 @@ test('validation subprocess binds exact request and target bytes and never appli
   assert.equal(fs.readFileSync(`${queue}.original`, 'utf8'), original);
 });
 
+test('compiled controller policy validates exact Runtime patch material through stdin', t => {
+  const root = makeTempRepo();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const hash = value => createHash('sha256').update(value).digest('hex');
+  const original = '# Brownie TODO Queue\n\n- [ ] original: Patch only `package.json`\n';
+  const queue = path.join(root, '.brownie/todo.md');
+  fs.writeFileSync(queue, original);
+  const selected = '- [ ] repair: Patch only `.brownie/todo.md`';
+  const prompt = `## Selected TODO\n\n${selected}\n`;
+  const promptPath = path.join(root, 'prompt.md');
+  const metaPath = path.join(root, 'metadata.json');
+  const constraintsPath = path.join(root, 'constraints.json');
+  fs.writeFileSync(promptPath, prompt);
+  fs.writeFileSync(metaPath, JSON.stringify({ prompt_path: promptPath, prompt_sha256: hash(prompt), selected_todo_text: selected, selected_todo_sha256: hash(selected), bdk_state: 'todo_queue_repair', queue_relative_path: '.brownie/todo.md' }));
+  const compiled = spawnSync(process.execPath, [path.join(repoRoot, 'scripts/phase-loop-task-constraints.mjs'), promptPath, metaPath, constraintsPath], { encoding: 'utf8' });
+  assert.equal(compiled.status, 0, compiled.stderr);
+  const policy = JSON.parse(fs.readFileSync(`${constraintsPath}.validator.json`, 'utf8'));
+  const request = {
+    schema_version: 1, context: policy.context,
+    proposal: { proposal: { proposal_id: 'p1', path: '.brownie/todo.md', operation: 'patch_file' } },
+    apply_params: { proposal_id: 'p1', run_id: 'r1', expected_target_sha256: `sha256:${hash(original)}`, patch_hunks: [{ old_text: '- [ ] original: Patch only `package.json`', new_text: '- [ ] corrected: Patch only `package.json`' }] }
+  };
+  function invoke(input) {
+    const bytes = JSON.stringify(input);
+    const result = spawnSync(policy.program, policy.args, { input: bytes, cwd: root, encoding: 'utf8' });
+    return { result, bytes, receipt: JSON.parse(result.stdout) };
+  }
+  const accepted = invoke(request);
+  assert.equal(accepted.result.status, 0, accepted.result.stdout + accepted.result.stderr);
+  assert.equal(accepted.receipt.request_sha256, `sha256:${hash(accepted.bytes)}`);
+  assert.equal(accepted.receipt.candidate_sha256, `sha256:${hash(original.replace('original:', 'corrected:'))}`);
+  for (const change of [
+    input => { input.apply_params.patch_hunks[0].new_text = '- [ ] invalid: Create only `package.json`'; },
+    input => { input.apply_params.expected_target_sha256 = `sha256:${hash('stale')}`; },
+    input => { input.apply_params.proposal_id = 'another'; },
+    input => { input.proposal.proposal.path = 'package.json'; },
+    input => { input.context.metadata.selected_todo_text += '\nchanged'; },
+    input => { input.apply_params.patch_hunks.push({ ...input.apply_params.patch_hunks[0] }); }
+  ]) {
+    const changed = structuredClone(request); change(changed);
+    assert.equal(invoke(changed).result.status, 1);
+    assert.equal(fs.readFileSync(queue, 'utf8'), original);
+  }
+  fs.appendFileSync(metaPath, '\n');
+  fs.unlinkSync(promptPath);
+  assert.equal(invoke(request).result.status, 0, 'claim policy survives prompt retention without rebuilding scope');
+  assert.equal(fs.readFileSync(queue, 'utf8'), original);
+});
+
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 
 function durableCompletionRecord(todoId, claimId = `claim-${todoId}`) {

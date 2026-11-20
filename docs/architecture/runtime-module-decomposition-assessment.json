@@ -202,9 +202,9 @@
         "diagnostics_mentions": 0
       },
       "crates/brownie-runtime/src/proposal_apply.rs": {
-        "line_count": 7249,
+        "line_count": 6953,
         "public_items": 7,
-        "private_items": 55,
+        "private_items": 53,
         "state_mutation_mentions": 7,
         "durable_write_mentions": 7,
         "permission_decision_mentions": 30,

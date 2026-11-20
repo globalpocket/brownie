@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { validateTodoDecompositionText, validateTodoDecompositionCandidate } from './guard-todo-decomposition.mjs';
 import { loadTodoState } from './phase-loop-todo-state.mjs';
+import { compileTaskConstraints } from './phase-loop-task-constraints.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -107,6 +108,80 @@ function boundedValidationBytes(filename) {
 }
 
 const validationDigest = bytes => `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+
+function boundedValidationStdin() {
+  const buffer = Buffer.alloc(1024 * 1024 + 1);
+  let length = 0;
+  while (length < buffer.length) {
+    const read = fs.readSync(0, buffer, length, buffer.length - length, null);
+    if (!read) break;
+    length += read;
+  }
+  if (length > 1024 * 1024) throw new Error('runtime validation input exceeds limit');
+  return buffer.subarray(0, length);
+}
+
+export function validateRuntimeProposalRequest(bytes, workspaceRoot) {
+  if (bytes.length > 1024 * 1024) throw new Error('runtime validation input exceeds limit');
+  const request = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+  if (request.schema_version !== 1) throw new Error('invalid runtime validation request');
+  const metadata = request.context?.metadata;
+  if (!metadata || validationDigest(JSON.stringify(metadata)) !== request.context?.metadata_sha256) throw new Error('stale policy metadata');
+  if (typeof metadata.selected_todo_text !== 'string'
+      || validationDigest(metadata.selected_todo_text) !== `sha256:${metadata.selected_todo_sha256}`) throw new Error('stale selected TODO');
+  const constraints = compileTaskConstraints(`## Selected TODO\n\n${metadata.selected_todo_text}\n`, {
+    state: metadata.bdk_state, queuePath: metadata.queue_relative_path
+  });
+  const proposal = request.proposal?.proposal;
+  const params = request.apply_params;
+  if (!proposal || !params || typeof params.run_id !== 'string' || !params.run_id
+      || typeof params.proposal_id !== 'string' || !params.proposal_id || params.proposal_id !== proposal.proposal_id
+      || !constraints.write_paths.includes(proposal.path)
+      || constraints.denied_write_paths?.includes(proposal.path)
+      || !constraints.write_operations.includes(proposal.operation)) throw new Error('proposal is outside bound controller policy');
+  const receipt = { schema_version: 1, valid: true, applied: false, request_sha256: validationDigest(bytes) };
+  if (proposal.path !== metadata.queue_relative_path) return receipt;
+  const pathCheck = validateQueueApplyCandidate(workspaceRoot, `- [ ] validation-target: Patch only \`${proposal.path}\``);
+  if (!pathCheck.valid) throw new Error(pathCheck.errors.join('; '));
+  const currentBytes = boundedValidationBytes(path.join(workspaceRoot, proposal.path));
+  if (validationDigest(currentBytes) !== params.expected_target_sha256) throw new Error('stale queue target');
+  let candidate = new TextDecoder('utf-8', { fatal: true }).decode(currentBytes);
+  if (proposal.operation === 'patch_file') {
+    if (!Array.isArray(params.patch_hunks) || params.patch_hunks.length < 1 || params.patch_hunks.length > 5) throw new Error('missing bounded patch material');
+    const ranges = [];
+    for (const hunk of params.patch_hunks) {
+      if (typeof hunk.old_text !== 'string' || !hunk.old_text || typeof hunk.new_text !== 'string') throw new Error('invalid patch material');
+      const matches = [];
+      let offset = 0;
+      while ((offset = candidate.indexOf(hunk.old_text, offset)) !== -1) {
+        matches.push(offset); offset += hunk.old_text.length;
+      }
+      const occurrence = hunk.occurrence;
+      if ((occurrence == null && matches.length !== 1)
+          || (occurrence != null && (!Number.isInteger(occurrence) || occurrence < 1 || occurrence > matches.length))) throw new Error('ambiguous or stale patch material');
+      const start = matches[(occurrence ?? 1) - 1];
+      const end = start + hunk.old_text.length;
+      const word = character => character != null && /[\p{L}\p{N}_]/u.test(character);
+      if ((word([...candidate.slice(0, start)].at(-1)) && word([...hunk.old_text][0]))
+          || (word([...hunk.old_text].at(-1)) && word([...candidate.slice(end)][0]))) throw new Error('patch splits a word');
+      ranges.push({ start, end, replacement: hunk.new_text });
+    }
+    ranges.sort((a, b) => a.start - b.start);
+    let cursor = 0;
+    let replacement = '';
+    for (const range of ranges) {
+      if (range.start < cursor) throw new Error('overlapping patch material');
+      replacement += candidate.slice(cursor, range.start) + range.replacement;
+      cursor = range.end;
+    }
+    candidate = replacement + candidate.slice(cursor);
+  } else if (proposal.operation === 'replace_file' && typeof params.replacement_content === 'string') {
+    candidate = params.replacement_content;
+  } else throw new Error('unsupported queue apply operation');
+  const validation = validateQueueApplyCandidate(workspaceRoot, candidate);
+  if (validation.valid) validation.errors.push(...validateTodoDecompositionCandidate(workspaceRoot, metadata.queue_relative_path, '.brownie/todo-breakdown.md', { todoText: candidate }));
+  return { ...receipt, valid: validation.errors.length === 0, errors: validation.errors.slice(0, 32), candidate_sha256: validationDigest(candidate) };
+}
 
 // A read-only validation receipt, not an apply authorization. The caller must
 // compare request/candidate hashes and retain the normal Runtime preflight.
@@ -1852,7 +1927,7 @@ if (process.argv[1] === __filename) {
   const args = parseArgs(process.argv);
   let result;
   try {
-    result = args.has('validate-proposal') ? validateQueueApplyRequest({
+    result = args.has('validate-runtime-proposal') ? validateRuntimeProposalRequest(boundedValidationStdin(), process.cwd()) : args.has('validate-proposal') ? validateQueueApplyRequest({
       workspaceRoot: repoRoot,
       requestPath: args.get('validate-proposal'),
       requestSha256: args.get('request-sha256'),
@@ -1867,15 +1942,15 @@ if (process.argv[1] === __filename) {
   } catch (error) {
     result = {
       schema_version: 1,
-      ...(args.has('validate-proposal') ? { valid: false } : {}),
+      ...(args.has('validate-proposal') || args.has('validate-runtime-proposal') ? { valid: false } : {}),
       applied: false,
       eligible: true,
       blocked: true,
-      reason: args.has('validate-proposal') ? 'queue_proposal_validation_failed' : error.code === 'workspace_package_json_invalid' ? error.code : 'todo_decomposition_repair_failed',
+      reason: args.has('validate-proposal') || args.has('validate-runtime-proposal') ? 'queue_proposal_validation_failed' : error.code === 'workspace_package_json_invalid' ? error.code : 'todo_decomposition_repair_failed',
       error_code: error.code ?? 'todo_decomposition_repair_failed',
       error_message: error.message
     };
   }
   console.log(JSON.stringify(result, null, 2));
-  process.exit(args.has('validate-proposal') ? (result.valid === true ? 0 : 1) : (result.applied ? 0 : result.eligible ? 1 : 2));
+  process.exit(args.has('validate-proposal') || args.has('validate-runtime-proposal') ? (result.valid === true ? 0 : 1) : (result.applied ? 0 : result.eligible ? 1 : 2));
 }

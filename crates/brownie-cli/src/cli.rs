@@ -8,6 +8,10 @@ pub struct Cli {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliCommand {
+    WithProposalValidator {
+        path: String,
+        command: Box<CliCommand>,
+    },
     Help {
         topic: Option<HelpTopic>,
     },
@@ -99,9 +103,24 @@ impl Cli {
         }
 
         let mut json = false;
+        let mut proposal_validator = None;
         let mut command_index = 0;
         while command_index < args.len() {
             match args[command_index].as_str() {
+                "--proposal-validator-file" => {
+                    if proposal_validator.is_some() {
+                        return Err(CliError::InvalidCommand(
+                            "duplicate proposal validator".into(),
+                        ));
+                    }
+                    proposal_validator = Some(
+                        args.get(command_index + 1)
+                            .filter(|value| !value.is_empty())
+                            .ok_or(CliError::MissingValue("--proposal-validator-file"))?
+                            .clone(),
+                    );
+                    command_index += 2;
+                }
                 "--json" => {
                     json = true;
                     command_index += 1;
@@ -142,6 +161,22 @@ impl Cli {
             other => return Err(CliError::UnknownCommand(other.to_string())),
         };
 
+        let command = if let Some(path) = proposal_validator {
+            if !matches!(
+                command,
+                CliCommand::Run { .. } | CliCommand::RunFile { .. } | CliCommand::Resume { .. }
+            ) {
+                return Err(CliError::InvalidCommand(
+                    "proposal validator requires run or resume".into(),
+                ));
+            }
+            CliCommand::WithProposalValidator {
+                path,
+                command: Box::new(command),
+            }
+        } else {
+            command
+        };
         Ok(Self { json, command })
     }
 
@@ -151,6 +186,7 @@ impl Cli {
             "",
             "Usage:",
             "  brownie [--json] <command>",
+            "  brownie [--json] --proposal-validator-file <json-path> <run|resume> ...",
             "  brownie help <topic>",
             "",
             "Commands:",
@@ -196,6 +232,7 @@ impl Cli {
                 "Set BROWNIE_CLI_RUN_MODE_ID to request a specific runtime mode for the admitted task.",
                 "For strict OpenAI-compatible provider runs, use BROWNIE_CLI_RUN_MODE_ID=provider-runner together with BROWNIE_LLM_ALLOW_PROVIDER_ACCESS=true.",
                 "One invocation performs bounded progress, persists through the runtime, and exits.",
+                "An explicit --proposal-validator-file before run or resume can veto automatic proposal application; it cannot grant runtime permission.",
                 "JSON output includes an automation object and controller_action for external loops.",
                 "",
                 "Examples:",

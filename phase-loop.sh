@@ -20640,6 +20640,15 @@ PY
 )" || exit 70
     mkdir -p "$runtime_claim_store" || exit 70
     export BROWNIE_STORE_ROOT="$runtime_claim_store"
+    # Retain the original claim's policy on resume; never rebuild it from a
+    # different selected TODO or silently continue without its validator.
+    runtime_validator="$runtime_claim_store/proposal-validator.json"
+    if [ "$use_resume" -ne 1 ]; then
+      cp "${effective_prompt%.prompt.md}.constraints.json.validator.json" "$runtime_validator.tmp" || exit 70
+      chmod 600 "$runtime_validator.tmp" || exit 70
+      mv "$runtime_validator.tmp" "$runtime_validator" || exit 70
+    fi
+    [ -f "$runtime_validator" ] && [ ! -L "$runtime_validator" ] || exit 70
     export PHASE_LOOP_CONTROL_ROOT
     export BROWNIE_PHASE_LOOP_ADMISSION_FILE="$runtime_admission_snapshot"
     export BROWNIE_PHASE_LOOP_CLAIM_ID="$(claim_field claim_id)"
@@ -20656,12 +20665,12 @@ PY
       # the intentionally ordinary verification resume explicit instead of
       # conflating that portable-shell edge case with a Runtime failure.
       if [ "${#objective_apply_resume_args[@]}" -gt 0 ]; then
-        run_with_portable_timeout "$brownie_timeout_seconds" "$BROWNIE_BIN" --json resume "${objective_apply_resume_args[@]}"
+        run_with_portable_timeout "$brownie_timeout_seconds" "$BROWNIE_BIN" --json --proposal-validator-file "$runtime_validator" resume "${objective_apply_resume_args[@]}"
       else
-        run_with_portable_timeout "$brownie_timeout_seconds" "$BROWNIE_BIN" --json resume
+        run_with_portable_timeout "$brownie_timeout_seconds" "$BROWNIE_BIN" --json --proposal-validator-file "$runtime_validator" resume
       fi
     else
-      run_with_portable_timeout "$brownie_timeout_seconds" "$BROWNIE_BIN" --json run --file "$effective_prompt" --constraints-file "${effective_prompt%.prompt.md}.constraints.json"
+      run_with_portable_timeout "$brownie_timeout_seconds" "$BROWNIE_BIN" --json --proposal-validator-file "$runtime_validator" run --file "$effective_prompt" --constraints-file "${effective_prompt%.prompt.md}.constraints.json"
     fi
   ) > "$stdout_log" 2> "$stderr_log"
   exit_code=$?

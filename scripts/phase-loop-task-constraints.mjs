@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import { boundedScopeEntries } from './phase-loop-bounded-scope.mjs';
 
 function exactPath(value) {
@@ -71,7 +71,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     } finally { fs.closeSync(fd); }
   }
   const prompt = readBounded(promptPath);
-  const metadata = JSON.parse(readBounded(metadataPath));
+  const metadataText = readBounded(metadataPath);
+  const metadata = JSON.parse(metadataText);
   if (metadata.prompt_sha256 !== createHash('sha256').update(prompt).digest('hex')) {
     throw new Error('constraint prompt does not match its controller metadata');
   }
@@ -90,5 +91,27 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     fs.renameSync(temporary, outputPath);
   } finally {
     if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
+  }
+  const validatorPath = `${outputPath}.validator.json`;
+  const validatorTemporary = `${validatorPath}.${process.pid}.tmp`;
+  const policyMetadata = {
+    selected_todo_text: metadata.selected_todo_text,
+    selected_todo_sha256: metadata.selected_todo_sha256,
+    bdk_state: metadata.bdk_state,
+    queue_relative_path: metadata.queue_relative_path
+  };
+  const validator = {
+    schema_version: 1,
+    program: process.execPath,
+    args: [fileURLToPath(new URL('./repair-todo-decomposition.mjs', import.meta.url)), '--validate-runtime-proposal', '1'],
+    // Keep the validated scope in the claim, independent of prompt retention.
+    context: { metadata: policyMetadata, metadata_sha256: `sha256:${createHash('sha256').update(JSON.stringify(policyMetadata)).digest('hex')}` }
+  };
+  if (Buffer.byteLength(JSON.stringify(validator)) > 65536) throw new Error('validator policy exceeds its bound; split the TODO');
+  try {
+    fs.writeFileSync(validatorTemporary, `${JSON.stringify(validator, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
+    fs.renameSync(validatorTemporary, validatorPath);
+  } finally {
+    if (fs.existsSync(validatorTemporary)) fs.unlinkSync(validatorTemporary);
   }
 }

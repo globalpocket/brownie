@@ -67,16 +67,122 @@ const CLI_RUN_MAX_MODE_ID_CHARS: usize = 128;
 const CLI_RESUME_MAX_STEPS: u8 = 1;
 const CLI_RUN_SESSION_PREFIX: &str = "cli.run.";
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExternalProposalValidator {
+    schema_version: u32,
+    program: String,
+    args: Vec<String>,
+    context: Value,
+}
+
+impl ExternalProposalValidator {
+    fn validate(&self, proposal: &Value, apply_params: &Value) -> Result<(), RuntimeClientError> {
+        let request = serde_json::to_vec(&json!({
+            "schema_version": 1, "context": self.context,
+            "proposal": proposal, "apply_params": apply_params
+        }))
+        .map_err(|_| RuntimeClientError::InvalidResponse)?;
+        if request.len() > MAX_RESPONSE_BYTES {
+            return Err(RuntimeClientError::InvalidResponse);
+        }
+        let fingerprint = format!("sha256:{:x}", Sha256::digest(&request));
+        let mut command = Command::new(&self.program);
+        command
+            .args(&self.args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
+        let mut child = command
+            .spawn()
+            .map_err(|_| RuntimeClientError::CommunicationFailed)?;
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or(RuntimeClientError::CommunicationFailed)?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or(RuntimeClientError::CommunicationFailed)?;
+        let (write_tx, write_rx) = mpsc::channel();
+        let writer = thread::spawn(move || {
+            let result = stdin.write_all(&request);
+            drop(stdin);
+            let _ = write_tx.send(result);
+        });
+        let (read_tx, read_rx) = mpsc::channel();
+        let reader = thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let result = stdout.take(65_537).read_to_end(&mut bytes).map(|_| bytes);
+            let _ = read_tx.send(result);
+        });
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break Ok(status),
+                Err(_) => break Err(RuntimeClientError::CommunicationFailed),
+                Ok(None) if std::time::Instant::now() >= deadline => {
+                    break Err(RuntimeClientError::TimedOut)
+                }
+                Ok(None) => thread::sleep(Duration::from_millis(10)),
+            }
+        };
+        // The validator gets its own process group. Reap descendants as well
+        // so inherited pipes cannot keep the bounded transport alive.
+        #[cfg(unix)]
+        unsafe {
+            libc::kill(-(child.id() as i32), libc::SIGKILL);
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        let written = write_rx.recv_timeout(Duration::from_millis(500));
+        let output = read_rx.recv_timeout(Duration::from_millis(500));
+        // Join only threads known to have finished their I/O.
+        if written.is_ok() {
+            let _ = writer.join();
+        }
+        if output.is_ok() {
+            let _ = reader.join();
+        }
+        if !status?.success() || !matches!(written, Ok(Ok(()))) {
+            return Err(RuntimeClientError::InvalidResponse);
+        }
+        let bytes = output
+            .map_err(|_| RuntimeClientError::TimedOut)?
+            .map_err(|_| RuntimeClientError::CommunicationFailed)?;
+        if bytes.len() > 65_536 {
+            return Err(RuntimeClientError::InvalidResponse);
+        }
+        let receipt: Value =
+            serde_json::from_slice(&bytes).map_err(|_| RuntimeClientError::InvalidResponse)?;
+        if receipt.get("schema_version").and_then(Value::as_u64) != Some(1)
+            || receipt.get("valid").and_then(Value::as_bool) != Some(true)
+            || receipt.get("request_sha256").and_then(Value::as_str) != Some(fingerprint.as_str())
+        {
+            return Err(RuntimeClientError::InvalidResponse);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RuntimeClient {
     boundary: RuntimeClientBoundary,
     config: RuntimeClientConfig,
     session: runtime_session::Slot,
+    proposal_validator: Option<ExternalProposalValidator>,
 }
 
 impl PartialEq for RuntimeClient {
     fn eq(&self, other: &Self) -> bool {
-        self.boundary == other.boundary && self.config == other.config
+        self.boundary == other.boundary
+            && self.config == other.config
+            && self.proposal_validator == other.proposal_validator
     }
 }
 impl Eq for RuntimeClient {}
@@ -155,6 +261,7 @@ impl Default for RuntimeClient {
             },
             config: RuntimeClientConfig::from_env(),
             session: runtime_session::Slot::default(),
+            proposal_validator: None,
         }
     }
 }
@@ -209,11 +316,44 @@ impl RuntimeClient {
             },
             config,
             session: runtime_session::Slot::default(),
+            proposal_validator: None,
         }
     }
 
     pub fn boundary(&self) -> &RuntimeClientBoundary {
         &self.boundary
+    }
+
+    pub fn with_proposal_validator_file(mut self, path: &str) -> Result<Self, RuntimeClientError> {
+        let file = crate::open_run_file(path).map_err(|_| RuntimeClientError::InvalidResponse)?;
+        if !file
+            .metadata()
+            .map_err(|_| RuntimeClientError::InvalidResponse)?
+            .is_file()
+        {
+            return Err(RuntimeClientError::InvalidResponse);
+        }
+        let mut bytes = Vec::new();
+        file.take(65_537)
+            .read_to_end(&mut bytes)
+            .map_err(|_| RuntimeClientError::InvalidResponse)?;
+        if bytes.len() > 65_536 {
+            return Err(RuntimeClientError::InvalidResponse);
+        }
+        let validator: ExternalProposalValidator =
+            serde_json::from_slice(&bytes).map_err(|_| RuntimeClientError::InvalidResponse)?;
+        if validator.schema_version != 1
+            || !std::path::Path::new(&validator.program).is_absolute()
+            || validator.args.len() > 32
+            || validator
+                .args
+                .iter()
+                .any(|arg| arg.len() > 4096 || arg.contains('\0'))
+        {
+            return Err(RuntimeClientError::InvalidResponse);
+        }
+        self.proposal_validator = Some(validator);
+        Ok(self)
     }
 
     pub fn invoke(&self, command: &CliCommand, json: bool) -> Result<String, RuntimeClientError> {
@@ -849,6 +989,9 @@ impl RuntimeClient {
             }
         };
 
+        if let Some(validator) = &self.proposal_validator {
+            validator.validate(&proposal, &params)?;
+        }
         let apply_result = self.call_runtime_value(
             PROPOSAL_APPLY_METHOD,
             Some(params),
@@ -5717,6 +5860,96 @@ fn render_truncation(output: &mut String, label: &str, len: usize, limit: usize)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn external_validator_requires_success_and_exact_input_receipt() {
+        let script = "import sys,json,hashlib; b=sys.stdin.buffer.read(); print(json.dumps({'schema_version':1,'valid':True,'request_sha256':'sha256:'+hashlib.sha256(b).hexdigest()}))";
+        let mut validator = ExternalProposalValidator {
+            schema_version: 1,
+            program: "/usr/bin/python3".into(),
+            args: vec!["-c".into(), script.into()],
+            context: json!({"policy":"fixture"}),
+        };
+        assert!(validator
+            .validate(&json!({"proposal_id":"p"}), &json!({"run_id":"r"}))
+            .is_ok());
+        for script in [
+            "print('{\"schema_version\":1,\"valid\":true,\"request_sha256\":\"sha256:old\"}')",
+            "import sys; sys.stdin.buffer.read(); print('{}')",
+            "import sys; sys.stdin.buffer.read(); sys.exit(1)",
+            "import sys; sys.stdin.buffer.read(); print('x'*65537)",
+        ] {
+            validator.args = vec!["-c".into(), script.into()];
+            assert!(validator.validate(&json!({}), &json!({})).is_err());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn external_validator_timeout_is_bounded_even_when_it_does_not_read_input() {
+        let validator = ExternalProposalValidator {
+            schema_version: 1,
+            program: "/usr/bin/python3".into(),
+            args: vec!["-c".into(), "import time; time.sleep(30)".into()],
+            context: Value::Null,
+        };
+        let start = std::time::Instant::now();
+        assert!(matches!(
+            validator.validate(&json!({"content":"x".repeat(200_000)}), &json!({})),
+            Err(RuntimeClientError::TimedOut)
+        ));
+        assert!(start.elapsed() < Duration::from_secs(10));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn external_validator_denial_prevents_the_actual_apply_rpc() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("brownie-validator-rpc-{}", Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let target = format!("validator-test-{}.txt", Uuid::new_v4());
+        let calls = root.join("calls.jsonl");
+        let observed = root.join("validated.json");
+        let script = root.join("runtime.py");
+        let proposal = json!({"proposal": {
+            "proposal_id":"p1", "path":target, "operation":"create_file",
+            "content_preview":"new\n", "content_chars":4, "truncated":false,
+            "validation_status":"Valid", "approval_status":"Approved", "diff_redacted":false,
+            "latest_snapshot":{}, "latest_apply_plan":{"status":"Ready"}
+        }});
+        std::fs::write(&script, format!(
+            "#!/usr/bin/python3\nimport sys,json\np=json.loads({})\nfor line in sys.stdin:\n r=json.loads(line)\n with open({},'a') as f: f.write(json.dumps(r)+'\\n')\n print(json.dumps({{'jsonrpc':'2.0','id':r['id'],'result':p}}),flush=True)\n",
+            serde_json::to_string(&proposal.to_string()).unwrap(), serde_json::to_string(&calls.to_string_lossy()).unwrap()
+        )).unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut client = RuntimeClient::new(RuntimeClientConfig::with_runtime_path(script));
+        client.proposal_validator = Some(ExternalProposalValidator {
+            schema_version: 1,
+            program: "/usr/bin/python3".into(),
+            args: vec![
+                "-c".into(),
+                format!(
+                    "import sys; b=sys.stdin.buffer.read(); open({},'wb').write(b); sys.exit(1)",
+                    serde_json::to_string(&observed.to_string_lossy()).unwrap()
+                ),
+            ],
+            context: json!({"bound":"fixture"}),
+        });
+        let result = client.follow_objective_proposal_apply_route_if_available(json!({
+            "objective_proposal_authorization_preflight_result":{"proposal_id":"p1","run_id":"r1"}
+        }), None);
+        assert!(matches!(result, Err(RuntimeClientError::InvalidResponse)));
+        let input: Value = serde_json::from_slice(&std::fs::read(&observed).unwrap()).unwrap();
+        assert_eq!(input["apply_params"]["proposal_id"], "p1");
+        assert_eq!(input["apply_params"]["replacement_content"], "new\n");
+        let calls = std::fs::read_to_string(&calls).unwrap();
+        assert!(calls.contains("proposal.inspect"));
+        assert!(!calls.contains("proposal.apply"));
+        assert!(!std::path::Path::new(&target).exists());
+        drop(client);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn execution_constraints_are_bound_to_task_start_not_goal_text() {
