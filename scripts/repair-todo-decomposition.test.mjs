@@ -6,7 +6,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { validateTodoDecompositionText } from './guard-todo-decomposition.mjs';
-import { validateQueueApplyCandidate, validateDecompositionTransition, validateRuntimeProposalRequest } from './repair-todo-decomposition.mjs';
+import { validateQueueApplyCandidate, validateDecompositionTransition, validateRuntimeProposalRequest, validateQueueRepairTransition } from './repair-todo-decomposition.mjs';
 
 test('Runtime proposal endpoint rejects decomposition of an unrelated parent without writing', t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-bound-parent-'));
@@ -27,6 +27,10 @@ test('Runtime proposal endpoint rejects decomposition of an unrelated parent wit
       patch_hunks: [{ old_text: other, new_text: '- [ ] child: Patch only `package.json`\n  Source TODO: selected.' }] }
   };
   assert.throws(() => validateRuntimeProposalRequest(Buffer.from(JSON.stringify(request)), root), /exactly the selected parent/u);
+  assert.equal(fs.readFileSync(target, 'utf8'), current);
+  metadata.bdk_state = 'todo_queue_repair';
+  request.context.metadata_sha256 = `sha256:${digest(JSON.stringify(metadata))}`;
+  assert.throws(() => validateRuntimeProposalRequest(Buffer.from(JSON.stringify(request)), root), /cannot introduce new leaf IDs/u);
   assert.equal(fs.readFileSync(target, 'utf8'), current);
 });
 
@@ -167,7 +171,7 @@ test('compiled controller policy validates exact Runtime patch material through 
   const request = {
     schema_version: 1, context: policy.context,
     proposal: { proposal: { proposal_id: 'p1', path: '.brownie/todo.md', operation: 'patch_file' } },
-    apply_params: { proposal_id: 'p1', run_id: 'r1', expected_target_sha256: `sha256:${hash(original)}`, patch_hunks: [{ old_text: '- [ ] original: Patch only `package.json`', new_text: '- [ ] corrected: Patch only `package.json`' }] }
+    apply_params: { proposal_id: 'p1', run_id: 'r1', expected_target_sha256: `sha256:${hash(original)}`, patch_hunks: [{ old_text: '- [ ] original: Patch only `package.json`', new_text: '- [ ] original: Patch only `package.json` to correct the bounded script.' }] }
   };
   function invoke(input) {
     const bytes = JSON.stringify(input);
@@ -177,8 +181,9 @@ test('compiled controller policy validates exact Runtime patch material through 
   const accepted = invoke(request);
   assert.equal(accepted.result.status, 0, accepted.result.stdout + accepted.result.stderr);
   assert.equal(accepted.receipt.request_sha256, `sha256:${hash(accepted.bytes)}`);
-  assert.equal(accepted.receipt.candidate_sha256, `sha256:${hash(original.replace('original:', 'corrected:'))}`);
+  assert.equal(accepted.receipt.candidate_sha256, `sha256:${hash(original.replace('- [ ] original: Patch only `package.json`', request.apply_params.patch_hunks[0].new_text))}`);
   for (const change of [
+    input => { input.apply_params.patch_hunks[0].new_text = '- [ ] corrected: Patch only `package.json`'; },
     input => { input.apply_params.patch_hunks[0].new_text = '- [ ] invalid: Create only `package.json`'; },
     input => { input.apply_params.expected_target_sha256 = `sha256:${hash('stale')}`; },
     input => { input.apply_params.proposal_id = 'another'; },
@@ -1966,3 +1971,44 @@ test('external decomposition rejects the original inline blocker instead of inve
   assert.equal(hunk.new_text, inline);
   assert.equal(hunk.new_text.includes('Route:'), false);
 });
+
+// Exact queue material from the former Runtime repair-policy tests.
+const migratedQueueRepairCases = [
+  {
+    "name": "todo_repair_patch_rejects_self_source_leaf",
+    "current": "old",
+    "candidate": "- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs`:\n  Route: implementation.\n  Source TODO: E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs`.\n  Depends on: <none>.\n  Completion condition: generated evidence is repaired.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.\n",
+    "valid": false
+  },
+  {
+    "name": "todo_repair_patch_rejects_duplicate_leaf_ids_in_new_text",
+    "current": "old",
+    "candidate": "- [ ] E-15d-soak-section-guard: Patch only `scripts/guard-runtime-operational-evidence.test.mjs`:\n  Route: implementation.\n  Source TODO: E-15d-stateful-soak-runner-real.\n  Depends on: E-15d-soak-section-collector.\n  Completion condition: guard evidence is repaired.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.\n- [ ] E-15d-soak-section-guard: Patch only `scripts/guard-runtime-operational-evidence.test.mjs`:\n  Route: implementation.\n  Source TODO: E-15d-stateful-soak-runner-real.\n  Depends on: E-15d-soak-section-collector.\n  Completion condition: guard evidence is repaired.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.\n",
+    "valid": false
+  },
+  {
+    "name": "todo_repair_patch_rejects_duplicate_leaf_ids_inside_hunks",
+    "current": "old",
+    "candidate": "- [ ] E-15d-soak-section-guard: Patch only `scripts/guard-runtime-operational-evidence.test.mjs`:\n  Route: implementation.\n  Source TODO: E-15d-stateful-soak-runner-real.\n  Depends on: E-15d-soak-section-collector.\n  Completion condition: guard evidence is repaired.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.\n- [ ] E-15d-soak-section-guard: Patch only `scripts/guard-runtime-operational-evidence.test.mjs`:\n  Route: implementation.\n  Source TODO: E-15d-stateful-soak-runner-real.\n  Depends on: E-15d-soak-section-collector.\n  Completion condition: guard evidence is repaired.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.\n",
+    "valid": false
+  },
+  {
+    "name": "todo_repair_patch_rejects_appended_leaf_ids_outside_old_text",
+    "current": "- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs`:\n  Route: implementation.\n  Source TODO: E-15d-stateful-soak-runner-real.\n  Depends on: <none>.\n  Completion condition: collector evidence is repaired.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.\n",
+    "candidate": "- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs`:\n  Route: implementation.\n  Source TODO: E-15d-stateful-soak-runner-real.\n  Depends on: <none>.\n  Completion condition: collector evidence is repaired.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.\n- [ ] E-15d-soak-section-guard: Patch only `scripts/guard-runtime-operational-evidence.test.mjs`:\n  Route: implementation.\n  Source TODO: E-15d-stateful-soak-runner-real.\n  Depends on: E-15d-soak-section-collector.\n  Completion condition: guard evidence is repaired.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.\n",
+    "valid": false
+  },
+  {
+    "name": "todo_repair_patch_allows_whole_corrupt_block_replacement",
+    "current": "- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs`:\n  Route: implementation.\n  Source TODO: E-15d-stateful-soak-runner-real.\n  Depends on: <none>.\n  Completion condition: collector evidence is repaired.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.\n- [ ] E-15d-soak-section-guard: Patch only `scripts/guard-runtime-operational-evidence.test.mjs`:\n  Route: implementation.\n  Source TODO: E-15d-stateful-soak-runner-real.\n  Depends on: E-15d-soak-section-collector.\n  Completion condition: guard evidence is repaired.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.\n- [ ] E-15d-soak-section-guard: Patch only `scripts/guard-runtime-operational-evidence.test.mjs`:\n  Route: implementation.\n  Source TODO: E-15d-stateful-soak-runner-real.\n  Depends on: E-15d-soak-section-collector.\n  Completion condition: guard evidence is repaired.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.\n",
+    "candidate": "- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs`:\n  Route: implementation.\n  Source TODO: E-15d-stateful-soak-runner-real.\n  Depends on: <none>.\n  Completion condition: collector evidence is repaired.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.\n- [ ] E-15d-soak-section-guard: Patch only `scripts/guard-runtime-operational-evidence.test.mjs`:\n  Route: implementation.\n  Source TODO: E-15d-stateful-soak-runner-real.\n  Depends on: E-15d-soak-section-collector.\n  Completion condition: guard evidence is repaired.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.\n",
+    "valid": true
+  }
+];
+for (const fixture of migratedQueueRepairCases) {
+  test(`external queue repair: ${fixture.name}`, () => {
+    const validate = () => validateQueueRepairTransition(fixture.current, fixture.candidate);
+    if (fixture.valid) assert.doesNotThrow(validate);
+    else assert.throws(validate, /queue repair/);
+  });
+}

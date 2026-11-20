@@ -2863,9 +2863,6 @@ pub(super) fn todo_md_workspace_write_rejection_reason(
         return todo_decomposition_workspace_write_rejection_reason(record, input);
     }
     if selected_todo_allows_todo_md_edit(&record.goal) {
-        if let Some(reason) = todo_repair_workspace_write_rejection_reason(input) {
-            return Some(reason);
-        }
         return None;
     }
     if record.goal.contains("- leaf_todo_write_forbidden_policy:")
@@ -3000,62 +2997,6 @@ fn selected_todo_requires_decomposition_only(goal: &str) -> bool {
             || lower.contains("細分化")
             || lower.contains("分割")
     })
-}
-
-fn todo_repair_workspace_write_rejection_reason(input: &Value) -> Option<&'static str> {
-    if let Some(hunks) = input.get("hunks").and_then(Value::as_array) {
-        let old_text = hunks
-            .iter()
-            .filter_map(|hunk| hunk.get("old_text").and_then(Value::as_str))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let new_text = hunks
-            .iter()
-            .filter_map(|hunk| {
-                hunk.get("new_text")
-                    .and_then(Value::as_str)
-                    .or_else(|| hunk.get("content").and_then(Value::as_str))
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        if !new_text.is_empty() {
-            return todo_repair_text_rejection_reason(
-                if old_text.is_empty() {
-                    None
-                } else {
-                    Some(old_text.as_str())
-                },
-                &new_text,
-            );
-        }
-    }
-    let old_text = input.get("old_text").and_then(Value::as_str);
-    let new_text = input
-        .get("new_text")
-        .and_then(Value::as_str)
-        .or_else(|| input.get("content").and_then(Value::as_str))?;
-    todo_repair_text_rejection_reason(old_text, new_text)
-}
-
-fn todo_repair_text_rejection_reason(
-    old_text: Option<&str>,
-    new_text: &str,
-) -> Option<&'static str> {
-    let leaf_blocks = unchecked_todo_blocks_from_text(new_text);
-    if let Some(old_text) = old_text {
-        let old_ids: HashSet<String> = unchecked_todo_blocks_from_text(old_text)
-            .into_iter()
-            .filter_map(todo_block_id_from_text)
-            .collect();
-        let introduces_new_leaf_id = leaf_blocks
-            .iter()
-            .filter_map(|leaf| todo_block_id_from_text(leaf))
-            .any(|id| !old_ids.is_empty() && !old_ids.contains(&id));
-        if introduces_new_leaf_id {
-            return Some("TODO repair patch must replace the existing corrupt TODO block, not append new leaf ids; include the whole duplicate block in old_text or remove duplicates without adding new ids.");
-        }
-    }
-    todo_repair_leaf_integrity_rejection_reason(&leaf_blocks)
 }
 
 fn todo_repair_leaf_integrity_rejection_reason(leaf_blocks: &[&str]) -> Option<&'static str> {
@@ -7086,119 +7027,6 @@ mod mcp_approval_lock_tests {
         );
 
         assert!(reason.is_none());
-    }
-
-    #[test]
-    fn todo_repair_patch_rejects_self_source_leaf() {
-        let mut record = test_task_record();
-        record.goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs`.\n\n## Previous Repair Feedback\n\n- repair_reason: `todo_decomposition_guard_failed_after_todo_apply`\n- repair_hint: \"Repair `.brownie/todo.md` only: remove duplicate leaf ids.\"\n".to_string();
-
-        let reason = todo_md_workspace_write_rejection_reason(
-            &record,
-            &json!({
-                "path": ".brownie/todo.md",
-                "operation": "patch_file",
-                "old_text": "old",
-                "new_text": "- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs`:\n  Route: implementation.\n  Source TODO: E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs`.\n  Depends on: <none>.\n  Completion condition: generated evidence is repaired.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.\n"
-            }),
-        );
-
-        assert_eq!(
-            reason,
-            Some("TODO repair patch must not set a leaf `Source TODO:` to the leaf itself; preserve the original parent TODO.")
-        );
-    }
-
-    #[test]
-    fn todo_repair_patch_rejects_duplicate_leaf_ids_in_new_text() {
-        let mut record = test_task_record();
-        record.goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs`.\n\n## Previous Repair Feedback\n\n- repair_reason: `todo_decomposition_guard_failed_after_todo_apply`\n- repair_hint: \"Repair `.brownie/todo.md` only: remove duplicate leaf ids.\"\n".to_string();
-
-        let leaf = "- [ ] E-15d-soak-section-guard: Patch only `scripts/guard-runtime-operational-evidence.test.mjs`:\n  Route: implementation.\n  Source TODO: E-15d-stateful-soak-runner-real.\n  Depends on: E-15d-soak-section-collector.\n  Completion condition: guard evidence is repaired.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.\n";
-        let reason = todo_md_workspace_write_rejection_reason(
-            &record,
-            &json!({
-                "path": ".brownie/todo.md",
-                "operation": "patch_file",
-                "old_text": "old",
-                "new_text": format!("{leaf}{leaf}")
-            }),
-        );
-
-        assert_eq!(
-            reason,
-            Some("TODO repair patch must not create duplicate unchecked TODO ids.")
-        );
-    }
-
-    #[test]
-    fn todo_repair_patch_rejects_duplicate_leaf_ids_inside_hunks() {
-        let mut record = test_task_record();
-        record.goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs`.\n\n## Previous Repair Feedback\n\n- repair_reason: `todo_decomposition_guard_failed_after_todo_apply`\n- repair_hint: \"Repair `.brownie/todo.md` only: remove duplicate leaf ids.\"\n".to_string();
-
-        let leaf = "- [ ] E-15d-soak-section-guard: Patch only `scripts/guard-runtime-operational-evidence.test.mjs`:\n  Route: implementation.\n  Source TODO: E-15d-stateful-soak-runner-real.\n  Depends on: E-15d-soak-section-collector.\n  Completion condition: guard evidence is repaired.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.\n";
-        let reason = todo_md_workspace_write_rejection_reason(
-            &record,
-            &json!({
-                "path": ".brownie/todo.md",
-                "operation": "patch_file",
-                "hunks": [
-                    {
-                        "old_text": "old",
-                        "new_text": format!("{leaf}{leaf}")
-                    }
-                ]
-            }),
-        );
-
-        assert_eq!(
-            reason,
-            Some("TODO repair patch must not create duplicate unchecked TODO ids.")
-        );
-    }
-
-    #[test]
-    fn todo_repair_patch_rejects_appended_leaf_ids_outside_old_text() {
-        let mut record = test_task_record();
-        record.goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs`.\n\n## Previous Repair Feedback\n\n- repair_reason: `todo_decomposition_guard_failed_after_todo_apply`\n- repair_hint: \"Repair `.brownie/todo.md` only: remove duplicate leaf ids.\"\n".to_string();
-
-        let collector = "- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs`:\n  Route: implementation.\n  Source TODO: E-15d-stateful-soak-runner-real.\n  Depends on: <none>.\n  Completion condition: collector evidence is repaired.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.\n";
-        let guard = "- [ ] E-15d-soak-section-guard: Patch only `scripts/guard-runtime-operational-evidence.test.mjs`:\n  Route: implementation.\n  Source TODO: E-15d-stateful-soak-runner-real.\n  Depends on: E-15d-soak-section-collector.\n  Completion condition: guard evidence is repaired.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.\n";
-        let reason = todo_md_workspace_write_rejection_reason(
-            &record,
-            &json!({
-                "path": ".brownie/todo.md",
-                "operation": "patch_file",
-                "old_text": collector,
-                "new_text": format!("{collector}{guard}")
-            }),
-        );
-
-        assert_eq!(
-            reason,
-            Some("TODO repair patch must replace the existing corrupt TODO block, not append new leaf ids; include the whole duplicate block in old_text or remove duplicates without adding new ids.")
-        );
-    }
-
-    #[test]
-    fn todo_repair_patch_allows_whole_corrupt_block_replacement() {
-        let mut record = test_task_record();
-        record.goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs`.\n\n## Previous Repair Feedback\n\n- repair_reason: `todo_decomposition_guard_failed_after_todo_apply`\n- repair_hint: \"Repair `.brownie/todo.md` only: remove duplicate leaf ids.\"\n".to_string();
-
-        let collector = "- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs`:\n  Route: implementation.\n  Source TODO: E-15d-stateful-soak-runner-real.\n  Depends on: <none>.\n  Completion condition: collector evidence is repaired.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.\n";
-        let guard = "- [ ] E-15d-soak-section-guard: Patch only `scripts/guard-runtime-operational-evidence.test.mjs`:\n  Route: implementation.\n  Source TODO: E-15d-stateful-soak-runner-real.\n  Depends on: E-15d-soak-section-collector.\n  Completion condition: guard evidence is repaired.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.\n";
-        let duplicate_guard = format!("{guard}{guard}");
-        let reason = todo_md_workspace_write_rejection_reason(
-            &record,
-            &json!({
-                "path": ".brownie/todo.md",
-                "operation": "patch_file",
-                "old_text": format!("{collector}{duplicate_guard}"),
-                "new_text": format!("{collector}{guard}")
-            }),
-        );
-
-        assert!(reason.is_none(), "{reason:?}");
     }
 
     #[test]

@@ -658,6 +658,11 @@ test('Runtime write scope does not parse project Patch only or Forbidden changes
   assert.doesNotMatch(source.slice(start, end), /Forbidden changes:|patch_only_paths/u);
 });
 
+test('Runtime does not decide whether queue repair may introduce new leaf IDs', () => {
+  const source = fs.readFileSync(path.join(repoRoot, 'crates/brownie-runtime/src/controlled_tool_execution.rs'), 'utf8');
+  assert.doesNotMatch(source, /fn todo_repair_workspace_write_rejection_reason|fn todo_repair_text_rejection_reason|introduces_new_leaf_id/u);
+});
+
 test('Runtime read admission uses typed constraints without project prompt interpretation', () => {
   const source = fs.readFileSync(path.join(repoRoot, 'crates/brownie-runtime/src/controlled_tool_execution.rs'), 'utf8');
   const start = source.indexOf('fn workspace_read_intent_runtime_rejection_reason(');

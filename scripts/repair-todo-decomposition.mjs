@@ -147,6 +147,18 @@ export function validateDecompositionTransition(selected, current, hunks) {
   }
 }
 
+export function validateQueueRepairTransition(current, candidate) {
+  const originalIds = new Set(uncheckedTodoBlocks(current).map(todoId));
+  const ids = new Set();
+  for (const leaf of uncheckedTodoBlocks(candidate)) {
+    const id = todoId(leaf);
+    if (!id || ids.has(id)) throw new Error('queue repair must not create duplicate leaf IDs');
+    if (sourceTodoId(leaf) === id) throw new Error('queue repair must preserve the parent rather than reference itself');
+    if (!originalIds.has(id)) throw new Error('queue repair cannot introduce new leaf IDs; use an explicit decomposition transition');
+    ids.add(id);
+  }
+}
+
 export function validateRuntimeProposalRequest(bytes, workspaceRoot) {
   if (bytes.length > 1024 * 1024) throw new Error('runtime validation input exceeds limit');
   const request = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
@@ -171,7 +183,8 @@ export function validateRuntimeProposalRequest(bytes, workspaceRoot) {
   if (!pathCheck.valid) throw new Error(pathCheck.errors.join('; '));
   const currentBytes = boundedValidationBytes(path.join(workspaceRoot, proposal.path));
   if (validationDigest(currentBytes) !== params.expected_target_sha256) throw new Error('stale queue target');
-  let candidate = new TextDecoder('utf-8', { fatal: true }).decode(currentBytes);
+  const current = new TextDecoder('utf-8', { fatal: true }).decode(currentBytes);
+  let candidate = current;
   if (metadata.bdk_state === 'decompose_todo') {
     if (proposal.operation !== 'patch_file') throw new Error('decomposition requires a bounded patch');
     validateDecompositionTransition(metadata.selected_todo_text, candidate, params.patch_hunks);
@@ -208,6 +221,7 @@ export function validateRuntimeProposalRequest(bytes, workspaceRoot) {
   } else if (proposal.operation === 'replace_file' && typeof params.replacement_content === 'string') {
     candidate = params.replacement_content;
   } else throw new Error('unsupported queue apply operation');
+  if (metadata.bdk_state === 'todo_queue_repair') validateQueueRepairTransition(current, candidate);
   const validation = validateQueueApplyCandidate(workspaceRoot, candidate);
   if (validation.valid) validation.errors.push(...validateTodoDecompositionCandidate(workspaceRoot, metadata.queue_relative_path, '.brownie/todo-breakdown.md', { todoText: candidate }));
   return { ...receipt, valid: validation.errors.length === 0, errors: validation.errors.slice(0, 32), candidate_sha256: validationDigest(candidate) };
