@@ -14450,53 +14450,6 @@ fn disambiguate_workspace_patch_input_from_goal(
     input: &Value,
     goal: &str,
 ) -> Value {
-    let goal_lower = goal.to_lowercase();
-    if (path == ".brownie/todo.md" || path == "todo.md")
-        && goal_lower.contains("duplicate unchecked todo id")
-        && goal_lower.contains("todo")
-        && input.get("hunks").is_none()
-        && input.get("content").is_none()
-        && input.get("operation").and_then(Value::as_str)
-            == Some(WorkspacePatchOperation::PatchFile.as_str())
-    {
-        if let Ok(hunks) = patch_hunks_from_input(input) {
-            if hunks.len() == 1 && hunks[0].occurrence.is_none() {
-                let hunk = &hunks[0];
-                if !hunk.old_text.is_empty() && hunk.old_text != hunk.new_text {
-                    if let Ok(root) = store.workspace_root().canonicalize() {
-                        if brownie_tools::preflight_workspace_write_path(path).is_ok() {
-                            let target = root.join(path);
-                            if let Ok(canonical_target) = target.canonicalize() {
-                                if canonical_target.starts_with(&root) {
-                                    if let Ok(existing) = std::fs::read_to_string(&canonical_target)
-                                    {
-                                        if count_text_matches(&existing, &hunk.old_text) > 1 {
-                                            let mut normalized =
-                                                input.as_object().cloned().unwrap_or_default();
-                                            normalized.remove("old_text");
-                                            normalized.remove("new_text");
-                                            normalized.remove("content");
-                                            normalized.insert(
-                                                "hunks".to_string(),
-                                                json!([
-                                                    {
-                                                        "old_text": hunk.old_text,
-                                                        "new_text": hunk.new_text,
-                                                        "occurrence": 2
-                                                    }
-                                                ]),
-                                            );
-                                            return Value::Object(normalized);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
     let Some(object_id) = selected_goal_json_object_id(goal) else {
         return input.clone();
     };
@@ -47168,7 +47121,7 @@ modes:
     }
 
     #[test]
-    fn duplicate_todo_repair_normalizes_top_level_patch_to_occurrence_hunk() {
+    fn duplicate_todo_repair_requires_explicit_occurrence_instead_of_goal_inference() {
         let _guard = lock_env();
         let temp = tempfile::tempdir().expect("tempdir");
         std::fs::create_dir_all(temp.path().join(".brownie")).expect("mkdir brownie");
@@ -47190,11 +47143,7 @@ modes:
         let normalized =
             disambiguate_workspace_patch_input_from_goal(&store, ".brownie/todo.md", &input, goal);
 
-        assert!(normalized.get("old_text").is_none());
-        assert_eq!(normalized["hunks"][0]["old_text"], duplicate_block);
-        assert_eq!(normalized["hunks"][0]["new_text"], "");
-        assert_eq!(normalized["hunks"][0]["occurrence"], 2);
-
+        assert_eq!(normalized, input);
         let proposal = build_workspace_patch_proposal_from_input(
             &store,
             ".brownie/todo.md",
@@ -47202,7 +47151,26 @@ modes:
             "",
             &normalized,
         );
-        assert_eq!(proposal.validation_status, "Valid");
+        assert_eq!(proposal.validation_status, "Invalid");
+        assert_eq!(
+            proposal.validation_reason,
+            Some("Patch old_text appears more than once in the current target.")
+        );
+        let explicit = json!({
+            "hunks": [{ "old_text": duplicate_block, "new_text": "", "occurrence": 2 }]
+        });
+        let bounded = build_workspace_patch_proposal_from_input(
+            &store,
+            ".brownie/todo.md",
+            WorkspacePatchOperation::PatchFile.as_str(),
+            "",
+            &explicit,
+        );
+        assert_eq!(bounded.validation_status, "Valid");
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join(".brownie/todo.md")).unwrap(),
+            format!("# Queue\n\n{duplicate_block}{duplicate_block}")
+        );
     }
 
     #[test]

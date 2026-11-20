@@ -633,6 +633,14 @@ test('Runtime proposal application does not interpret the project TODO queue', (
   }
 });
 
+test('Runtime patch disambiguation never infers queue occurrence from project feedback', () => {
+  const source = fs.readFileSync(path.join(repoRoot, 'crates/brownie-runtime/src/lib.rs'), 'utf8');
+  const start = source.indexOf('fn disambiguate_workspace_patch_input_from_goal(');
+  const end = source.indexOf('\nfn normalize_json_line_block_patch_input_from_target(', start);
+  assert.ok(start > 0 && end > start, 'locate the complete disambiguation function');
+  assert.doesNotMatch(source.slice(start, end), /todo\.md|duplicate unchecked todo|"occurrence": 2/u);
+});
+
 test('Runtime read admission uses typed constraints without project prompt interpretation', () => {
   const source = fs.readFileSync(path.join(repoRoot, 'crates/brownie-runtime/src/controlled_tool_execution.rs'), 'utf8');
   const start = source.indexOf('fn workspace_read_intent_runtime_rejection_reason(');
