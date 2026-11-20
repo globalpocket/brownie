@@ -606,3 +606,19 @@ test('missing execution evidence preserves a verified terminal-replan recovery',
   assert.match(block, /write_status "replanned"/);
   assert.match(block, /return 0/);
 });
+
+test('production Runtime does not contain Brownie TODO planning policy', () => {
+  const source = fs.readFileSync(path.join(repoRoot, 'crates/brownie-runtime/src/controlled_tool_execution.rs'), 'utf8');
+  const testModule = source.indexOf('#[cfg(test)]\nmod mcp_approval_lock_tests');
+  assert.ok(testModule > 0, 'locate the unit-test module explicitly; never silently scan an empty source');
+  const production = source.slice(0, testModule);
+  const forbidden = [
+    /\bE-(?:04|07|14|15)\b/u,
+    /PR #435/u,
+    /\.brownie\/todo\.md/u,
+    /fn concrete_product_ready_decomposition\b/u,
+  ];
+  for (const policy of forbidden) {
+    assert.equal(policy.test(production), false, `project policy remains in production Runtime: ${policy}`);
+  }
+});
