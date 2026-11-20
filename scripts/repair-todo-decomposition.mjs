@@ -189,6 +189,9 @@ export function validateRuntimeProposalRequest(bytes, workspaceRoot) {
   if (bytes.length > 1024 * 1024) throw new Error('runtime validation input exceeds limit');
   const request = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
   if (request.schema_version !== 1) throw new Error('invalid runtime validation request');
+  const stage = request.validation_stage ?? 'before_apply';
+  if (!['before_authorization', 'before_apply'].includes(stage)) throw new Error('invalid validation stage');
+  if (stage === 'before_authorization' && request.proposal?.proposal?.approval_status !== 'Pending') throw new Error('review requires a pending proposal');
   const metadata = request.context?.metadata;
   if (!metadata || validationDigest(JSON.stringify(metadata)) !== request.context?.metadata_sha256) throw new Error('stale policy metadata');
   if (typeof metadata.selected_todo_text !== 'string'
@@ -208,7 +211,8 @@ export function validateRuntimeProposalRequest(bytes, workspaceRoot) {
   const pathCheck = validateQueueApplyCandidate(workspaceRoot, `- [ ] validation-target: Patch only \`${proposal.path}\``);
   if (!pathCheck.valid) throw new Error(pathCheck.errors.join('; '));
   const currentBytes = boundedValidationBytes(path.join(workspaceRoot, proposal.path));
-  if (validationDigest(currentBytes) !== params.expected_target_sha256) throw new Error('stale queue target');
+  if ((stage === 'before_apply' || params.expected_target_sha256 !== undefined)
+      && validationDigest(currentBytes) !== params.expected_target_sha256) throw new Error('stale queue target');
   const current = new TextDecoder('utf-8', { fatal: true }).decode(currentBytes);
   let candidate = current;
   if (metadata.bdk_state === 'decompose_todo') {

@@ -209,7 +209,27 @@ test('compiled controller policy validates exact Runtime patch material through 
   assert.equal(accepted.result.status, 0, accepted.result.stdout + accepted.result.stderr);
   assert.equal(accepted.receipt.request_sha256, `sha256:${hash(accepted.bytes)}`);
   assert.equal(accepted.receipt.candidate_sha256, `sha256:${hash(original.replace('- [ ] original: Patch only `package.json`', request.apply_params.patch_hunks[0].new_text))}`);
-  for (const change of [
+  const review = structuredClone(request);
+  review.validation_stage = 'before_authorization';
+  review.proposal.proposal.approval_status = 'Pending';
+  delete review.apply_params.expected_target_sha256;
+  const reviewed = invoke(review);
+  assert.equal(reviewed.result.status, 0, reviewed.result.stdout + reviewed.result.stderr);
+  assert.equal(reviewed.receipt.applied, false);
+  assert.equal(reviewed.receipt.candidate_sha256, accepted.receipt.candidate_sha256);
+  assert.equal(reviewed.receipt.request_sha256, `sha256:${hash(reviewed.bytes)}`);
+  assert.equal(fs.readFileSync(queue, 'utf8'), original);
+  const invalidStage = { ...request, validation_stage: 'skip_validation' };
+  assert.equal(invoke(invalidStage).result.status, 1);
+  const alreadyApproved = structuredClone(review);
+  alreadyApproved.proposal.proposal.approval_status = 'Approved';
+  assert.equal(invoke(alreadyApproved).result.status, 1);
+  assert.equal(invoke({ ...review, validation_stage: 'before_apply' }).result.status, 1,
+    'apply still requires an exact Runtime preflight snapshot');
+  fs.writeFileSync(queue, `${original}\n# changed after review\n`);
+  assert.equal(invoke(request).result.status, 1, 'review does not authorize applying to a changed target');
+  fs.writeFileSync(queue, original);
+  for (const base of [request, review]) for (const change of [
     input => { input.apply_params.patch_hunks[0].new_text = '- [ ] corrected: Patch only `package.json`'; },
     input => { input.apply_params.patch_hunks[0].new_text = '- [ ] invalid: Create only `package.json`'; },
     input => { input.apply_params.expected_target_sha256 = `sha256:${hash('stale')}`; },
@@ -218,7 +238,7 @@ test('compiled controller policy validates exact Runtime patch material through 
     input => { input.context.metadata.selected_todo_text += '\nchanged'; },
     input => { input.apply_params.patch_hunks.push({ ...input.apply_params.patch_hunks[0] }); }
   ]) {
-    const changed = structuredClone(request); change(changed);
+    const changed = structuredClone(base); change(changed);
     assert.equal(invoke(changed).result.status, 1);
     assert.equal(fs.readFileSync(queue, 'utf8'), original);
   }

@@ -418,7 +418,7 @@ phase_loop_prepare_pr_fixture_workspace() {
 }
 
 case "$PHASE_LOOP_CLAIM_SMOKE_SECTION" in
-  all|core|terminal|merged-terminal|completion|terminal-absent|queue-claim|queue-recovery|queue-integrity|pr|lifecycle|guards|feedback|review-rework) ;;
+  all|core|terminal|merged-terminal|completion|terminal-absent|queue-claim|queue-apply|queue-resume|queue-recovery|queue-integrity|pr|lifecycle|guards|feedback|review-rework) ;;
   *)
     echo "unknown phase-loop claim smoke section: $PHASE_LOOP_CLAIM_SMOKE_SECTION" >&2
     exit 2
@@ -435,7 +435,7 @@ if [ "$PHASE_LOOP_CLAIM_SMOKE_SECTION" = "all" ]; then
   # The terminal recovery liveness proof consumes nearly its entire bounded
   # deadline alone.  Put it first so the scheduler's terminal singleton rule
   # cannot accidentally group it with unrelated CPU-heavy fixtures.
-  claim_smoke_shards=(terminal merged-terminal core completion terminal-absent queue-claim queue-recovery queue-integrity pr guards feedback review-rework lifecycle)
+  claim_smoke_shards=(terminal merged-terminal core completion terminal-absent queue-claim queue-apply queue-resume queue-recovery queue-integrity pr guards feedback review-rework lifecycle)
   # A guards shard must pass end-to-end. Treating its historical static-check
   # failure as success would mask the very controller regressions this suite
   # exists to catch.
@@ -3524,6 +3524,12 @@ BROWNIE_BIN="$fake_brownie_blocked_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
 run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
+test_workspace="$queue_original_workspace"
+fi
+
+# Separate replay-budget checks from claim admission to retain bounded deadlines.
+if claim_smoke_section_enabled queue-apply; then
+queue_apply_original_workspace="$test_workspace"
 state_objective_apply_stalled="$(mktemp -d)"
 prompt_objective_apply_stalled="$(mktemp)"
 queue_objective_workspace="$(mktemp -d)"
@@ -3644,6 +3650,13 @@ assert breakdown.startswith("# queue fixture breakdown\n"), breakdown
 assert "E-99-replan-stalled-leaf-" in breakdown, breakdown
 PY
 
+git -C "$queue_objective_workspace" restore --worktree -- .brownie
+test_workspace="$queue_apply_original_workspace"
+fi
+
+# Scoped authorization/resume checks own their fixture and deadline window.
+if claim_smoke_section_enabled queue-resume; then
+queue_resume_original_workspace="$test_workspace"
 # Liveness acceptance: an exhausted legacy replay budget must not suppress a
 # later claim-admitted Runtime execution that has a direct authorization. The
 # next invocation must consume that authorization, mutate only the claimed
@@ -4082,8 +4095,7 @@ assert argv[-1] == "--json resume", argv
 assert status["status"] != "blocked", status
 assert "claim-bound session/journey/task/run scope" not in status.get("detail", ""), status
 PY
-git -C "$queue_objective_workspace" restore --worktree -- .brownie
-test_workspace="$queue_workspace"
+test_workspace="$queue_resume_original_workspace"
 fi
 
 if claim_smoke_section_enabled queue-recovery; then

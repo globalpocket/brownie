@@ -24,7 +24,7 @@ case "${PHASE_LOOP_CLAIM_SMOKE_SECTION:-}" in
   terminal|merged-terminal)
     printf 'terminal shard completed\n'
     ;;
-  queue|queue-claim|queue-recovery|queue-integrity)
+  queue|queue-claim|queue-apply|queue-resume|queue-recovery|queue-integrity)
     printf 'queue shard completed\n'
     ;;
   expected|unexpected)
@@ -130,6 +130,15 @@ PHASE_LOOP_CLAIM_SMOKE_CPU_COUNT=4 \
 assert_json "$capacity_output" 'all(any(r.get("event") == "shard_started" and r.get("shard") == shard and "batch_size=1" in r.get("detail", "") and "batch_rationale=queue_serialized_for_low_cpu_90s_deadline" in r.get("detail", "") and "cpu_count=4" in r.get("detail", "") for r in manifest["records"]) for shard in ["queue-claim", "queue-recovery", "queue-integrity"])'
 assert_json "$capacity_output" 'any(r.get("event") == "shard_started" and r.get("shard") == "fast" and "batch_start=5" in r.get("detail", "") for r in manifest["records"])'
 assert_json "$capacity_output" 'any(r.get("event") == "scheduler_plan" and "configured_watchdog_seconds=10" in r.get("detail", "") and "effective_watchdog_seconds=466" in r.get("detail", "") and "required_watchdog_seconds=466" in r.get("detail", "") and "planned_batches=5" in r.get("detail", "") and "effective_batch_sizes=2,1,1,1,1" in r.get("detail", "") and "cleanup_margin_seconds=11" in r.get("detail", "") and "plan_overhead_seconds=5" in r.get("detail", "") and r.get("workspace_root") for r in manifest["records"])'
+
+split_queue_output="$fixture_root/split-queue-audit.json"
+PHASE_LOOP_CLAIM_SMOKE_CPU_COUNT=4 \
+  PHASE_LOOP_CLAIM_SMOKE_AUDIT_OUTPUT="$split_queue_output" \
+  bash "$scheduler_driver" "$split_queue_output" \
+  "$fixture_root/split-queue-shards" "$fixture_script" 2 10 90 "" queue-apply queue-resume \
+  2>"$fixture_root/split-queue-driver.stderr"
+assert_json "$split_queue_output" 'all(any(r.get("event") == "shard_finished" and r.get("shard") == shard and r.get("accepted") is True for r in manifest["records"]) for shard in ["queue-apply", "queue-resume"])'
+assert_json "$split_queue_output" 'all(any(r.get("event") == "shard_started" and r.get("shard") == shard and "batch_size=1" in r.get("detail", "") and "queue_serialized_for_low_cpu_90s_deadline" in r.get("detail", "") for r in manifest["records"]) for shard in ["queue-apply", "queue-resume"])'
 
 terminal_output="$fixture_root/terminal-audit.json"
 PHASE_LOOP_CLAIM_SMOKE_AUDIT_OUTPUT="$terminal_output" \

@@ -78,8 +78,18 @@ struct ExternalProposalValidator {
 
 impl ExternalProposalValidator {
     fn validate(&self, proposal: &Value, apply_params: &Value) -> Result<(), RuntimeClientError> {
+        self.validate_for_stage(proposal, apply_params, "before_apply")
+    }
+
+    fn validate_for_stage(
+        &self,
+        proposal: &Value,
+        apply_params: &Value,
+        stage: &str,
+    ) -> Result<(), RuntimeClientError> {
         let request = serde_json::to_vec(&json!({
             "schema_version": 1, "context": self.context,
+            "validation_stage": stage,
             "proposal": proposal, "apply_params": apply_params
         }))
         .map_err(|_| RuntimeClientError::InvalidResponse)?;
@@ -928,12 +938,91 @@ impl RuntimeClient {
             return Ok(result);
         };
 
+        self.validate_objective_proposal_before_authorization(&params)?;
         let authorization_result = self.call_runtime_value(
             HEADLESS_CONTINUE_ONCE_METHOD,
             Some(params),
             RuntimeRequestClass::ObjectiveExecution,
         )?;
         merge_objective_continue_result(result, authorization_result)
+    }
+
+    fn validate_objective_proposal_before_authorization(
+        &self,
+        authorization_params: &Value,
+    ) -> Result<(), RuntimeClientError> {
+        let Some(validator) = &self.proposal_validator else {
+            return Ok(());
+        };
+        let target = object_field(
+            authorization_params,
+            "objective_proposal_authorization_preflight_target",
+        )?;
+        let run_id = required_display_string(target, "expected_run_id")?;
+        let proposal_id = required_display_string(target, "expected_proposal_id")?;
+        let inspected = self.call_runtime_value(
+            PROPOSAL_INSPECT_METHOD,
+            Some(json!({"run_id": run_id, "proposal_id": proposal_id})),
+            RuntimeRequestClass::ObjectiveExecution,
+        )?;
+        let proposal = object_field(&inspected, "proposal")?;
+        let operation = required_display_string(proposal, "operation")?;
+        let proposal_path = required_display_string(proposal, "path")?;
+        let path_fingerprint = format!("sha256:{:x}", Sha256::digest(proposal_path.as_bytes()));
+        if required_display_string(proposal, "proposal_id")? != proposal_id
+            || operation != required_display_string(target, "expected_operation")?
+            || path_fingerprint != required_display_string(target, "expected_path_fingerprint")?
+            || required_display_string(proposal, "validation_status")? != "Valid"
+            || required_display_string(proposal, "approval_status")? != "Pending"
+            || required_bool(proposal, "diff_redacted")?
+            || !matches!(
+                operation.as_str(),
+                "create_file" | "replace_file" | "patch_file"
+            )
+        {
+            return Err(RuntimeClientError::InvalidResponse);
+        }
+        let truncated = required_bool(proposal, "truncated")?;
+        let events = if operation == "patch_file" || truncated {
+            Some(self.call_runtime_value(
+                RUN_EVENTS_METHOD,
+                Some(json!({"run_id": run_id, "include_patch_material": true})),
+                RuntimeRequestClass::ObjectiveExecution,
+            )?)
+        } else {
+            None
+        };
+        let material = if operation == "patch_file" {
+            extract_patch_file_apply_material(
+                events.as_ref().ok_or(RuntimeClientError::InvalidResponse)?,
+                proposal,
+            )?
+        } else {
+            let content = if truncated {
+                extract_exact_full_file_apply_material(events.as_ref(), proposal, &run_id)?
+                    .ok_or(RuntimeClientError::InvalidResponse)?
+            } else {
+                required_workspace_write_content(proposal, "content_preview")?
+            };
+            if display_usize(proposal, "content_chars")? != content.chars().count() {
+                return Err(RuntimeClientError::InvalidResponse);
+            }
+            json!({"replacement_content": content})
+        };
+        let mut review_params = material
+            .as_object()
+            .cloned()
+            .ok_or(RuntimeClientError::InvalidResponse)?;
+        review_params.insert("run_id".into(), Value::String(run_id));
+        review_params.insert("proposal_id".into(), Value::String(proposal_id));
+        // This is a read-only review, not an apply authorization. The external
+        // policy inspects current content; the post-approval gate still binds
+        // its validation to Runtime's actual preflight snapshot before apply.
+        validator.validate_for_stage(
+            &inspected,
+            &Value::Object(review_params),
+            "before_authorization",
+        )
     }
 
     fn follow_objective_proposal_apply_route_if_available(
@@ -5904,6 +5993,69 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn external_validator_precedes_authorization_and_rejects_substituted_proposals() {
+        use std::os::unix::fs::PermissionsExt;
+        for (valid, substitute_path) in [(false, false), (true, false), (true, true)] {
+            let root =
+                std::env::temp_dir().join(format!("brownie-review-validator-{}", Uuid::new_v4()));
+            std::fs::create_dir(&root).unwrap();
+            let calls = root.join("calls.jsonl");
+            let observed = root.join("validated.json");
+            let script = root.join("runtime.py");
+            let target = format!("review-validator-{}.txt", Uuid::new_v4());
+            let proposal = json!({"proposal": {
+                "proposal_id":"proposal_1", "path":if substitute_path {"other.txt"} else {&target},
+                "operation":"create_file", "content_preview":"new\n", "content_chars":4,
+                "truncated":false, "validation_status":"Valid", "approval_status":"Pending", "diff_redacted":false
+            }});
+            std::fs::write(&script, format!(
+                "#!/usr/bin/python3\nimport sys,json\np=json.loads({})\nfor line in sys.stdin:\n r=json.loads(line)\n with open({},'a') as f: f.write(json.dumps(r)+'\\n')\n out=p if r['method']=='proposal.inspect' else {{'next_action':'apply_authorized_objective_proposal','objective_proposal_authorization_preflight_result':{{'proposal_id':'proposal_1','run_id':'run_1'}}}}\n print(json.dumps({{'jsonrpc':'2.0','id':r['id'],'result':out}}),flush=True)\n",
+                serde_json::to_string(&proposal.to_string()).unwrap(), serde_json::to_string(&calls.to_string_lossy()).unwrap()
+            )).unwrap();
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let mut client = RuntimeClient::new(RuntimeClientConfig::with_runtime_path(script));
+            client.proposal_validator = Some(ExternalProposalValidator {
+                schema_version: 1,
+                program: "/usr/bin/python3".into(),
+                args: vec!["-c".into(), format!(
+                    "import sys,json,hashlib; b=sys.stdin.buffer.read(); open({},'wb').write(b); print(json.dumps({{'schema_version':1,'valid':{},'applied':False,'request_sha256':'sha256:'+hashlib.sha256(b).hexdigest()}}))",
+                    serde_json::to_string(&observed.to_string_lossy()).unwrap(), if valid {"True"} else {"False"}
+                )],
+                context: json!({"bound":"review-fixture"}),
+            });
+            let mut drive = objective_preflight_drive_fixture();
+            drive["objective_proposal_candidate"]["operation"] = json!("create_file");
+            drive["objective_proposal_candidate"]["path_fingerprint"] =
+                json!(format!("sha256:{:x}", Sha256::digest(target.as_bytes())));
+            let result = client.follow_objective_proposal_preflight_route_if_available(drive);
+            assert_eq!(result.is_ok(), valid && !substitute_path, "{result:?}");
+            let calls = std::fs::read_to_string(&calls).unwrap();
+            assert!(calls.contains("proposal.inspect"));
+            assert_eq!(
+                calls.contains("headless.continue_once"),
+                valid && !substitute_path,
+                "{calls}"
+            );
+            assert!(!calls.contains("proposal.apply"));
+            if substitute_path {
+                assert!(!observed.exists());
+            } else {
+                let input: Value =
+                    serde_json::from_slice(&std::fs::read(&observed).unwrap()).unwrap();
+                assert_eq!(input["validation_stage"], "before_authorization");
+                assert_eq!(input["apply_params"]["proposal_id"], "proposal_1");
+                assert_eq!(input["apply_params"]["run_id"], "run_1");
+                assert_eq!(input["apply_params"]["replacement_content"], "new\n");
+                assert!(input["apply_params"].get("authorize").is_none());
+            }
+            assert!(!std::path::Path::new(&target).exists());
+            drop(client);
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn external_validator_denial_prevents_the_actual_apply_rpc() {
         use std::os::unix::fs::PermissionsExt;
         let root = std::env::temp_dir().join(format!("brownie-validator-rpc-{}", Uuid::new_v4()));
@@ -6091,9 +6243,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn cli_run_objective_proposal_preflight_params_use_runtime_route_evidence() {
-        let drive = json!({
+    fn objective_preflight_drive_fixture() -> Value {
+        json!({
             "status": "task_executed",
             "session_id": "cli.run.abc",
             "drive_id": "cli.run.abc.drive",
@@ -6141,7 +6292,12 @@ mod tests {
                 "replayed": false,
                 "next_action": "review_and_authorize_objective_proposal"
             }
-        });
+        })
+    }
+
+    #[test]
+    fn cli_run_objective_proposal_preflight_params_use_runtime_route_evidence() {
+        let drive = objective_preflight_drive_fixture();
 
         let params = objective_proposal_authorization_preflight_params(&drive)
             .unwrap()
