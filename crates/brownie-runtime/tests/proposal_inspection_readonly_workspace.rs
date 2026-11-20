@@ -225,6 +225,7 @@ fn read_only_rpc_matrix_preserves_store_and_current_reads() {
     let run = "run_historical_v1_running_task";
     let task = "task_historical_v1_running_task";
     let mut cases = vec![
+        ("task.list", serde_json::json!({}), true),
         ("run.inspect", serde_json::json!({"run_id":run}), true),
         ("run.events", serde_json::json!({"run_id":run}), true),
         ("task.inspect", serde_json::json!({"task_id":task}), true),
@@ -294,6 +295,25 @@ fn read_only_rpc_matrix_preserves_store_and_current_reads() {
                 before,
                 "{seed} {method}: read changed workspace"
             );
+            if *method == "task.list" {
+                match seed {
+                    "empty" => {
+                        assert!(response.get("error").is_none(), "{response}");
+                        assert_eq!(response["result"]["tasks"], serde_json::json!([]));
+                        assert_eq!(response["result"]["progress_overview"]["task_count"], 0);
+                    }
+                    "current" => {
+                        let result = &response["result"];
+                        assert!(result["tasks"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .any(|row| row["task_id"] == task));
+                        assert!(result["progress_overview"]["task_count"].as_u64().unwrap() > 0);
+                    }
+                    _ => assert!(response.get("error").is_some(), "{seed}: {response}"),
+                }
+            }
             if seed == "current" {
                 assert_eq!(
                     response.get("error").is_none(),
@@ -316,6 +336,42 @@ fn read_only_rpc_matrix_preserves_store_and_current_reads() {
             }
             println!("read-only matrix: {seed} {method} preserved bytes, directories and mtimes");
         }
+    }
+}
+
+#[test]
+fn task_list_refuses_pending_recovery_without_mutation() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _environment = Environment::isolated();
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../brownie-store/tests/fixtures/historical-ledger/v1-running-task/.brownie");
+    for pending in ["schema-lock", "terminal-transition"] {
+        let workspace = tempfile::tempdir().unwrap();
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", workspace.path());
+        let state = workspace.path().join(".brownie");
+        copy_fixture_tree(&fixture, &state);
+        let store = brownie_store::BrownieStore::from_env_or_cwd().unwrap();
+        let marker = if pending == "schema-lock" {
+            state.join("store-schema.lock")
+        } else {
+            store
+                .tasks()
+                .run_dir("run_historical_v1_running_task")
+                .join("terminal-transition.json")
+        };
+        std::fs::write(marker, b"pending owner-controlled state").unwrap();
+        let before = snapshot(workspace.path());
+        let request = json!({"jsonrpc":"2.0","id":1,"method":"task.list","params":{}});
+        let response: Value = serde_json::from_str(
+            &brownie_runtime::handle_jsonrpc_input_line(&request.to_string()).unwrap(),
+        )
+        .unwrap();
+        assert!(response.get("error").is_some(), "{pending}: {response}");
+        assert_eq!(
+            snapshot(workspace.path()),
+            before,
+            "{pending}: read recovered state"
+        );
     }
 }
 
