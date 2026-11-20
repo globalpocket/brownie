@@ -3092,42 +3092,7 @@ fn workspace_read_intent_runtime_rejection_reason(
     if !task_requires_workspace_write_proposal(record) {
         return Ok(None);
     }
-    let workspace_read_path = input.get("path").and_then(Value::as_str);
-    let todo_repair_read_allowed = workspace_read_path.is_some_and(is_todo_workspace_path)
-        && selected_todo_allows_todo_md_edit(&record.goal);
-    let patch_only_paths = patch_only_paths_from_goal(&record.goal);
-    let leaf_target_repair_read_allowed =
-        task_goal_allows_leaf_target_repair_workspace_read(&record.goal)
-            && workspace_read_path.is_some_and(|requested| {
-                patch_only_paths
-                    .iter()
-                    .any(|target| requested == target.as_str())
-            });
-    if task_goal_embeds_repair_workspace_read_preview(&record.goal)
-        && !todo_repair_read_allowed
-        && !leaf_target_repair_read_allowed
-    {
-        return Ok(Some(
-            "Repair feedback already embeds previous workspace.read output_preview; workspace.read is not progress. Request workspace.write or record a concrete blocker TODO."
-                .to_string(),
-        ));
-    }
-    if task_goal_forbids_leaf_repair_workspace_read(&record.goal)
-        && !todo_repair_read_allowed
-        && !leaf_target_repair_read_allowed
-    {
-        return Ok(Some(
-            "Bounded leaf repair requires the next tool to be workspace.write for the selected target; workspace.read is not progress in this repair turn."
-                .to_string(),
-        ));
-    }
-    if let Some(reason) = workspace_read_rejection_reason_from_selected_todo(&record.goal, input) {
-        return Ok(Some(reason));
-    }
-    if run_has_workspace_read_for_same_path_without_write_proposal(store, record, input)?
-        || (task_goal_enforces_workspace_read_budget_before_write(&record.goal)
-            && run_workspace_read_count_without_write_proposal(store, record)? >= 2)
-    {
+    if run_has_workspace_read_for_same_path_without_write_proposal(store, record, input)? {
         if let Some(offset_bytes) = truncated_workspace_read_next_offset(store, record, input)? {
             return Ok(Some(format!(
                 "The prior workspace.read range was truncated. Do not repeat it: request exactly one workspace.read for the same path with input.offset_bytes={offset_bytes}, then request workspace.write using that range and its content_sha256."
@@ -3701,94 +3666,6 @@ fn truncated_workspace_read_next_offset(
     }))
 }
 
-fn run_workspace_read_count_without_write_proposal(
-    store: &BrownieStore,
-    record: &brownie_protocol::TaskRecord,
-) -> anyhow::Result<usize> {
-    let events = store.tasks().read_ledger_events(&record.run_id)?;
-    if events
-        .iter()
-        .any(|event| event.kind == LedgerEventKind::WorkspacePatchProposed)
-    {
-        return Ok(0);
-    }
-    Ok(events
-        .iter()
-        .filter(|event| {
-            event.kind == LedgerEventKind::ToolExecutionCompleted
-                && event.payload.as_ref().is_some_and(|payload| {
-                    payload.get("tool_id").and_then(Value::as_str) == Some(WORKSPACE_READ_TOOL_ID)
-                })
-        })
-        .count())
-}
-
-fn task_goal_enforces_workspace_read_budget_before_write(goal: &str) -> bool {
-    goal.contains("- read_batch_policy:") || goal.contains("# Brownie Phase Loop Effective Prompt")
-}
-
-fn task_goal_embeds_repair_workspace_read_preview(goal: &str) -> bool {
-    goal.contains("- read_budget_repair_policy:")
-        && goal.contains("- previous_workspace_read_preview_")
-}
-
-fn task_goal_forbids_leaf_repair_workspace_read(goal: &str) -> bool {
-    goal.contains("- leaf_required_next_tool_policy:")
-        || goal.contains("- leaf_retry_required_next_tool:")
-}
-
-fn task_goal_allows_leaf_target_repair_workspace_read(goal: &str) -> bool {
-    goal.contains("- leaf_target_read_missing_repair_policy:")
-        || goal.contains("- stale_read_preview_policy:")
-        || goal.contains("- leaf_retry_read_first_policy:")
-        || goal.contains("- leaf_exact_context_reread_policy:")
-}
-
-fn workspace_read_rejection_reason_from_selected_todo(goal: &str, input: &Value) -> Option<String> {
-    let requested_path = input.get("path").and_then(Value::as_str)?;
-    if is_todo_workspace_path(requested_path) && selected_todo_allows_todo_md_edit(goal) {
-        return None;
-    }
-    if let Some(only_path) = create_only_path_from_goal(goal) {
-        return Some(format!(
-            "Selected TODO says to create only `{only_path}`; workspace.read of `{requested_path}` is not progress. Request workspace.write create_file for the named target or write one concrete blocker TODO."
-        ));
-    }
-    let patch_only_paths = patch_only_paths_from_goal(goal);
-    if !patch_only_paths.is_empty()
-        && !patch_only_paths
-            .iter()
-            .any(|only_path| requested_path == only_path.as_str())
-    {
-        let only_paths = patch_only_paths
-            .iter()
-            .map(|path| format!("`{path}`"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        return Some(format!(
-            "Selected TODO says to patch only {only_paths}; reading `{requested_path}` is not progress. Use the existing target-file context and request workspace.write."
-        ));
-    }
-    if forbidden_read_paths_from_goal(goal)
-        .iter()
-        .any(|forbidden| forbidden == requested_path)
-    {
-        return Some(format!(
-            "Selected TODO explicitly forbids reading `{requested_path}`; request workspace.write for the named target file instead."
-        ));
-    }
-    None
-}
-
-fn create_only_path_from_goal(goal: &str) -> Option<String> {
-    let goal = selected_todo_section(goal);
-    let marker = "Create only `";
-    let start = goal.find(marker)? + marker.len();
-    let end = goal[start..].find('`')? + start;
-    let path = goal[start..end].trim();
-    (!path.is_empty()).then(|| path.to_string())
-}
-
 fn patch_only_paths_from_goal(goal: &str) -> Vec<String> {
     let goal = selected_todo_section(goal);
     let first_line = goal
@@ -3803,28 +3680,6 @@ fn patch_only_paths_from_goal(goal: &str) -> Vec<String> {
         .into_iter()
         .filter(|path| !path.trim().is_empty())
         .collect()
-}
-
-fn forbidden_read_paths_from_goal(goal: &str) -> Vec<String> {
-    let goal = selected_todo_section(goal);
-    let Some(start) = goal.find("Do not read") else {
-        return Vec::new();
-    };
-    let tail = &goal[start..goal.len().min(start + 400)];
-    let mut paths = Vec::new();
-    let mut rest = tail;
-    while let Some(open) = rest.find('`') {
-        let after_open = &rest[open + 1..];
-        let Some(close) = after_open.find('`') else {
-            break;
-        };
-        let candidate = after_open[..close].trim();
-        if candidate.contains('/') && !candidate.is_empty() {
-            paths.push(candidate.to_string());
-        }
-        rest = &after_open[close + 1..];
-    }
-    paths
 }
 
 fn selected_todo_section(goal: &str) -> &str {
@@ -6965,52 +6820,20 @@ mod mcp_approval_lock_tests {
     }
 
     #[test]
-    fn patch_only_todo_rejects_unrelated_workspace_read() {
-        let goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-16a-fixture-objective: Make the Golden Journey fixture request a deterministic workspace mutation:\n  Patch only `scripts/release-runtime-operational-evidence.mjs`. Do not read\n  or patch `scripts/release-gate.mjs`.\n";
-
-        let reason = workspace_read_rejection_reason_from_selected_todo(
-            goal,
-            &json!({"path": "scripts/release-gate.mjs"}),
-        )
-        .expect("rejection");
-
-        assert!(reason.contains("patch only `scripts/release-runtime-operational-evidence.mjs`"));
-        assert!(workspace_read_rejection_reason_from_selected_todo(
-            goal,
-            &json!({"path": "scripts/release-runtime-operational-evidence.mjs"})
-        )
-        .is_none());
-    }
-
-    #[test]
-    fn patch_only_todo_allows_each_multiple_target_workspace_read() {
-        let goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-16f-release-contract-audit-sync: Patch only `docs/architecture/runtime-release-contract.json` and `docs/architecture/runtime-release-readiness-audit.json` to reflect current executable evidence:\n  Route: documentation.\n";
-
-        assert!(workspace_read_rejection_reason_from_selected_todo(
-            goal,
-            &json!({"path": "docs/architecture/runtime-release-contract.json"})
-        )
-        .is_none());
-        assert!(workspace_read_rejection_reason_from_selected_todo(
-            goal,
-            &json!({"path": "docs/architecture/runtime-release-readiness-audit.json"})
-        )
-        .is_none());
-        assert!(workspace_read_rejection_reason_from_selected_todo(
-            goal,
-            &json!({"path": "docs/architecture/final-product-ready-judgment.md"})
-        )
-        .expect("unrelated read rejected")
-        .contains("runtime-release-contract.json"));
-    }
-
-    #[test]
     fn patch_only_todo_unrelated_workspace_read_is_denied_at_intent_gate() {
         let temp = tempfile::tempdir().expect("temp dir");
         let store = BrownieStore::new(temp.path());
         let mut record = test_task_record();
         record.goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-16a-fixture-objective: Make the Golden Journey fixture request a deterministic workspace mutation:\n  Patch only `scripts/release-runtime-operational-evidence.mjs`. Do not read\n  or patch `scripts/release-gate.mjs`.\n"
             .to_string();
+
+        record.execution_constraints = Some(brownie_protocol::TaskExecutionConstraints {
+            read_paths: Some(vec![
+                "scripts/release-runtime-operational-evidence.mjs".into()
+            ]),
+            max_workspace_reads: Some(2),
+            ..Default::default()
+        });
 
         let reason = workspace_read_intent_runtime_rejection_reason(
             &store,
@@ -7021,7 +6844,7 @@ mod mcp_approval_lock_tests {
 
         assert!(reason
             .expect("reason")
-            .contains("reading `scripts/release-gate.mjs` is not progress"));
+            .contains("task_execution_constraint_denied"));
     }
 
     #[test]
@@ -7032,6 +6855,12 @@ mod mcp_approval_lock_tests {
         record.goal = "# Brownie Phase Loop Effective Prompt\n\n## BDK Execution Packet\n\n- leaf_required_next_tool_policy: the next tool must be `workspace.write` for `docs/architecture/runtime-release-readiness-audit.json` unless final-answer fail-closed is unavoidable; `workspace.read` and `.brownie/todo.md` writes are not progress for this repair turn.\n\n## Selected TODO\n\n- [ ] E-15e-release-readiness-audit-sync-leaf: Patch only `docs/architecture/runtime-release-readiness-audit.json`:\n  Route: documentation.\n  Source TODO: E-15e-release-contract-audit-phase-resync.\n"
             .to_string();
 
+        record.execution_constraints = Some(brownie_protocol::TaskExecutionConstraints {
+            read_paths: Some(vec![]),
+            max_workspace_reads: Some(0),
+            ..Default::default()
+        });
+
         let reason = workspace_read_intent_runtime_rejection_reason(
             &store,
             &record,
@@ -7040,8 +6869,8 @@ mod mcp_approval_lock_tests {
         .expect("intent rejection")
         .expect("reason");
 
-        assert!(reason.contains("workspace.write for the selected target"));
-        assert!(reason.contains("workspace.read is not progress"));
+        assert!(reason.contains("task_execution_constraint_denied"));
+        assert!(reason.contains("task_execution_constraint_denied"));
     }
 
     #[test]
@@ -7051,6 +6880,14 @@ mod mcp_approval_lock_tests {
         let mut record = test_task_record();
         record.goal = "# Brownie Phase Loop Effective Prompt\n\n## BDK Execution Packet\n\n- leaf_required_next_tool_policy: the next tool must be `workspace.write` for `scripts/guard-release-evidence-semantic-consistency.test.mjs` unless final-answer fail-closed is unavoidable.\n- leaf_target_read_missing_repair_policy: previous repair context did not contain a `workspace.read` preview for `scripts/guard-release-evidence-semantic-consistency.test.mjs`; the next tool may be exactly one `workspace.read` for `scripts/guard-release-evidence-semantic-consistency.test.mjs` before any `workspace.write`.\n- stale_read_preview_policy: previous workspace.read previews are not for `scripts/guard-release-evidence-semantic-consistency.test.mjs`.\n\n## Selected TODO\n\n- [ ] E-16e-semantic-consistency-guard-test-verify-step1b: Patch only `scripts/guard-release-evidence-semantic-consistency.test.mjs` to add one test.\n  Route: implementation.\n  Source TODO: E-16e-semantic-consistency-guard-test-verify-step1a.\n"
             .to_string();
+
+        record.execution_constraints = Some(brownie_protocol::TaskExecutionConstraints {
+            read_paths: Some(vec![
+                "scripts/guard-release-evidence-semantic-consistency.test.mjs".into(),
+            ]),
+            max_workspace_reads: Some(1),
+            ..Default::default()
+        });
 
         let reason = workspace_read_intent_runtime_rejection_reason(
             &store,
@@ -7068,6 +6905,12 @@ mod mcp_approval_lock_tests {
         let store = BrownieStore::new(temp.path());
         let mut record = test_task_record();
         record.goal = "# Brownie Phase Loop Effective Prompt\n\n## BDK Execution Packet\n\n- read_budget_repair_policy: a previous workspace.read preview was truncated.\n- previous_workspace_read_preview_0: [workspace.read path=scripts/release-local-artifact.mjs bytes_total=12800]\n  [...previous workspace.read preview middle omitted by phase-loop...]\n- leaf_exact_context_reread_policy: the next tool may be exactly one bounded `workspace.read` for `scripts/release-local-artifact.mjs` before a small workspace.write.\n\n## Selected TODO\n\n- [ ] E-23a-release-artifact-portable-archive-leaf-01: Patch only `scripts/release-local-artifact.mjs`:\n  Route: implementation.\n  Source TODO: E-23a-release-artifact-portable-archive.\n".to_string();
+
+        record.execution_constraints = Some(brownie_protocol::TaskExecutionConstraints {
+            read_paths: Some(vec!["scripts/release-local-artifact.mjs".into()]),
+            max_workspace_reads: Some(1),
+            ..Default::default()
+        });
 
         let reason = workspace_read_intent_runtime_rejection_reason(
             &store,
@@ -7087,6 +6930,14 @@ mod mcp_approval_lock_tests {
         record.goal = "# Brownie Phase Loop Effective Prompt\n\n## BDK Execution Packet\n\n- stale_read_preview_policy: previous workspace.read previews are not for `scripts/guard-release-evidence-semantic-consistency.test.mjs`.\n\n## Selected TODO\n\n- [ ] E-16e-semantic-consistency-guard-test-verify-step1b: Patch only `scripts/guard-release-evidence-semantic-consistency.test.mjs` to add one test.\n  Route: implementation.\n\n## TODO Queue Snapshot\n\n- [ ] E-16e-semantic-consistency-guard-wiring: Patch only `package.json` and `scripts/release-gate.mjs` to run semantic consistency validation.\n"
             .to_string();
 
+        record.execution_constraints = Some(brownie_protocol::TaskExecutionConstraints {
+            read_paths: Some(vec![
+                "scripts/guard-release-evidence-semantic-consistency.test.mjs".into(),
+            ]),
+            max_workspace_reads: Some(1),
+            ..Default::default()
+        });
+
         let reason = workspace_read_intent_runtime_rejection_reason(
             &store,
             &record,
@@ -7105,6 +6956,12 @@ mod mcp_approval_lock_tests {
         record.goal = "# Brownie Phase Loop Effective Prompt\n\n## BDK Execution Packet\n\n- create_only_policy: do not request `workspace.read` for the missing Create only target.\n\n## Selected TODO\n\n- [ ] E-15g-pr435-hygiene-evidence: Create only `.brownie/release-evidence/pr435-hygiene-evidence.json` to record the bounded PR #435 hygiene conclusion.\n"
             .to_string();
 
+        record.execution_constraints = Some(brownie_protocol::TaskExecutionConstraints {
+            read_paths: Some(vec![]),
+            max_workspace_reads: Some(0),
+            ..Default::default()
+        });
+
         let reason = workspace_read_intent_runtime_rejection_reason(
             &store,
             &record,
@@ -7113,20 +6970,8 @@ mod mcp_approval_lock_tests {
         .expect("intent rejection")
         .expect("reason");
 
-        assert!(
-            reason.contains("create only `.brownie/release-evidence/pr435-hygiene-evidence.json`")
-        );
-        assert!(reason.contains("workspace.read of `README.md` is not progress"));
-    }
-
-    #[test]
-    fn repair_feedback_preview_disables_initial_workspace_read() {
-        let goal = "# Brownie Phase Loop Effective Prompt\n\n## Previous Repair Feedback\n\n- read_budget_repair_policy: previous workspace.read content is embedded below; do not emit workspace.read in this invocation.\n- previous_workspace_read_preview_0: \"[workspace.read path=scripts/release-runtime-operational-evidence.mjs bytes_total=1 content_sha256=sha256:aaa]\\nconst x = 1;\"\n\n## Selected TODO\n\n- [ ] E-15d: Patch only `scripts/release-runtime-operational-evidence.mjs`.\n";
-
-        assert!(task_goal_embeds_repair_workspace_read_preview(goal));
-        assert!(!task_goal_embeds_repair_workspace_read_preview(
-            "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-15d: Patch only `scripts/release-runtime-operational-evidence.mjs`.\n"
-        ));
+        assert!(reason.contains("task_execution_constraint_denied"));
+        assert!(reason.contains("task_execution_constraint_denied"));
     }
 
     #[test]
@@ -7517,22 +7362,6 @@ mod mcp_approval_lock_tests {
         );
 
         assert!(reason.is_none(), "{reason:?}");
-    }
-
-    #[test]
-    fn repair_feedback_can_read_todo_md_after_todo_decomposition_guard_failure() {
-        let goal = "# Brownie Phase Loop Effective Prompt\n\n## Previous Repair Feedback\n\n- read_budget_repair_policy: previous workspace.read content is embedded below; do not emit workspace.read in this invocation.\n- repair_reason: `todo_decomposition_guard_failed_after_todo_apply`\n- repair_hint: \"Repair `.brownie/todo.md` only: remove duplicate leaf ids.\"\n- previous_workspace_read_preview_0: \"[workspace.read path=scripts/release-runtime-operational-evidence.mjs bytes_total=1 content_sha256=sha256:aaa]\\nconst x = 1;\"\n\n## Selected TODO\n\n- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs`.\n";
-
-        assert!(workspace_read_rejection_reason_from_selected_todo(
-            goal,
-            &json!({"path": ".brownie/todo.md"})
-        )
-        .is_none());
-        assert!(workspace_read_rejection_reason_from_selected_todo(
-            goal,
-            &json!({"path": "scripts/release-gate.mjs"})
-        )
-        .is_some());
     }
 
     #[test]

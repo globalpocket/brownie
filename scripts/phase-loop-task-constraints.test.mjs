@@ -93,3 +93,36 @@ test('CLI binds prompt metadata and preserves output on stale source', async () 
     assert.equal(fs.readdirSync(dir).some((name) => name.endsWith('.tmp')), false);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+// Migrated project policy cases formerly evaluated inside Runtime.
+const migratedReadGoals = {
+  "patch_only_todo_rejects_unrelated_workspace_read": "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-16a-fixture-objective: Make the Golden Journey fixture request a deterministic workspace mutation:\n  Patch only `scripts/release-runtime-operational-evidence.mjs`. Do not read\n  or patch `scripts/release-gate.mjs`.\n",
+  "patch_only_todo_allows_each_multiple_target_workspace_read": "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-16f-release-contract-audit-sync: Patch only `docs/architecture/runtime-release-contract.json` and `docs/architecture/runtime-release-readiness-audit.json` to reflect current executable evidence:\n  Route: documentation.\n",
+  "repair_feedback_preview_disables_initial_workspace_read": "# Brownie Phase Loop Effective Prompt\n\n## Previous Repair Feedback\n\n- read_budget_repair_policy: previous workspace.read content is embedded below; do not emit workspace.read in this invocation.\n- previous_workspace_read_preview_0: \"[workspace.read path=scripts/release-runtime-operational-evidence.mjs bytes_total=1 content_sha256=sha256:aaa]\\nconst x = 1;\"\n\n## Selected TODO\n\n- [ ] E-15d: Patch only `scripts/release-runtime-operational-evidence.mjs`.\n",
+  "repair_feedback_can_read_todo_md_after_todo_decomposition_guard_failure": "# Brownie Phase Loop Effective Prompt\n\n## Previous Repair Feedback\n\n- read_budget_repair_policy: previous workspace.read content is embedded below; do not emit workspace.read in this invocation.\n- repair_reason: `todo_decomposition_guard_failed_after_todo_apply`\n- repair_hint: \"Repair `.brownie/todo.md` only: remove duplicate leaf ids.\"\n- previous_workspace_read_preview_0: \"[workspace.read path=scripts/release-runtime-operational-evidence.mjs bytes_total=1 content_sha256=sha256:aaa]\\nconst x = 1;\"\n\n## Selected TODO\n\n- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs`.\n"
+};
+test('migrated single-target read policy requires a bounded first-line contract', () => {
+  assert.throws(() => compileTaskConstraints(migratedReadGoals.patch_only_todo_rejects_unrelated_workspace_read));
+  const policy = compileTaskConstraints(prompt('- [ ] E-16a-fixture-objective: Patch only `scripts/release-runtime-operational-evidence.mjs`. Do not read or patch `scripts/release-gate.mjs`.'));
+  assert.deepEqual(policy.read_paths, ['scripts/release-runtime-operational-evidence.mjs']);
+  assert.ok(!policy.read_paths.includes('scripts/release-gate.mjs'));
+});
+test('migrated multiple-target read policy permits each selected target only', () => {
+  const policy = compileTaskConstraints(migratedReadGoals.patch_only_todo_allows_each_multiple_target_workspace_read);
+  assert.deepEqual(policy.read_paths, ['docs/architecture/runtime-release-contract.json', 'docs/architecture/runtime-release-readiness-audit.json']);
+  assert.ok(!policy.read_paths.includes('docs/architecture/final-product-ready-judgment.md'));
+});
+test('migrated saved-preview read policy forbids a redundant initial read', () => {
+  const policy = compileTaskConstraints(migratedReadGoals.repair_feedback_preview_disables_initial_workspace_read);
+  assert.deepEqual(policy.read_paths, []);
+  assert.equal(policy.max_workspace_reads, 0);
+  assert.equal(compileTaskConstraints(prompt('- [ ] E-15d: Patch only `scripts/release-runtime-operational-evidence.mjs`.')).max_workspace_reads, 2);
+});
+test('migrated queue-repair read exception needs an explicit controller state', () => {
+  const goal = migratedReadGoals.repair_feedback_can_read_todo_md_after_todo_decomposition_guard_failure;
+  const ordinary = compileTaskConstraints(goal);
+  assert.ok(!ordinary.read_paths.includes('.brownie/todo.md'));
+  const repair = compileTaskConstraints(goal, { state: 'todo_queue_repair' });
+  assert.deepEqual(repair.read_paths, ['.brownie/todo.md']);
+  assert.ok(!repair.read_paths.includes('scripts/release-gate.mjs'));
+});

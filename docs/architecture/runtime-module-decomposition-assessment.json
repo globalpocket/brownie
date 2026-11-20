@@ -62,9 +62,9 @@
         "diagnostics_mentions": 0
       },
       "crates/brownie-runtime/src/controlled_tool_execution.rs": {
-        "line_count": 7887,
+        "line_count": 7716,
         "public_items": 69,
-        "private_items": 100,
+        "private_items": 92,
         "state_mutation_mentions": 48,
         "durable_write_mentions": 48,
         "permission_decision_mentions": 119,
@@ -72,7 +72,7 @@
         "rpc_dispatch_mentions": 0,
         "approval_mentions": 228,
         "mcp_mentions": 366,
-        "product_dod_mentions": 54,
+        "product_dod_mentions": 53,
         "diagnostics_mentions": 14
       },
       "crates/brownie-runtime/src/headless_continue.rs": {
