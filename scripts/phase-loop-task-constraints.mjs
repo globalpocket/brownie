@@ -39,13 +39,24 @@ export function compileTaskConstraints(prompt, { queuePath = '.brownie/todo.md',
     .flatMap((line) => [...line.matchAll(/`([^`]+)`/gu)].map((match) => exactPath(match[1]))))];
   if (!queueOnly && !paths.includes(queuePath)) denied.push(queuePath);
   if (paths.some((path) => denied.includes(path))) throw new Error('selected scope conflicts with Forbidden changes');
-  const forceWrite = /^- (?:leaf_required_next_tool_policy|leaf_oversized_repair_next_tool_policy):/mu.test(sections[0]);
+  // Recovery instructions are controller policy, not text the Runtime parses.
+  // An explicitly admitted exact-context reread takes precedence over a
+  // previous write-next hint, but never permits a different target.
+  const repairContext = sections[0];
+  const allowExactReread = /^- (?:leaf_target_read_missing_repair_policy|stale_read_preview_policy|leaf_retry_read_first_policy|leaf_exact_context_reread_policy):/mu.test(repairContext);
+  const embeddedPreview = /^- read_budget_repair_policy:/mu.test(repairContext)
+    && /^- previous_workspace_read_preview_/mu.test(repairContext);
+  const forceWrite = !queueOnly && !allowExactReread && (embeddedPreview
+    || /^- (?:leaf_required_next_tool_policy|leaf_oversized_repair_next_tool_policy|leaf_retry_required_next_tool):/mu.test(repairContext));
+  const deniedReads = [...new Set([...selected.matchAll(/Do not read\b([\s\S]*?)(?=\.\s|$)/giu)]
+    .flatMap(match => [...match[1].matchAll(/`([^`]+)`/gu)].map(value => exactPath(value[1]))))];
   return {
     read_paths: operation === 'create' || forceWrite ? [] : paths,
+    denied_read_paths: deniedReads,
     write_paths: paths,
     denied_write_paths: [...new Set(denied)],
     write_operations: [operation === 'create' ? 'create_file' : 'patch_file'],
-    max_workspace_reads: operation === 'create' || forceWrite ? 0 : 2,
+    max_workspace_reads: operation === 'create' || forceWrite ? 0 : allowExactReread && !queueOnly ? 1 : 2,
     requires_workspace_write_proposal: true,
   };
 }

@@ -2739,70 +2739,6 @@ pub(super) fn handle_approved_workspace_intents(
             )?;
             continue;
         }
-        if decision.tool_id == WORKSPACE_READ_TOOL_ID
-            && task_goal_requires_workspace_write_proposal(&record.goal)
-        {
-            let workspace_read_path = decision.input.get("path").and_then(Value::as_str);
-            let todo_repair_read_allowed = workspace_read_path.is_some_and(is_todo_workspace_path)
-                && selected_todo_allows_todo_md_edit(&record.goal);
-            let patch_only_paths = patch_only_paths_from_goal(&record.goal);
-            let leaf_target_repair_read_allowed =
-                task_goal_allows_leaf_target_repair_workspace_read(&record.goal)
-                    && workspace_read_path.is_some_and(|requested| {
-                        patch_only_paths
-                            .iter()
-                            .any(|target| requested == target.as_str())
-                    });
-            if task_goal_embeds_repair_workspace_read_preview(&record.goal)
-                && !todo_repair_read_allowed
-                && !leaf_target_repair_read_allowed
-            {
-                store.tasks().append_task_event_with_payload(
-                    record,
-                    LedgerEventKind::ToolExecutionDenied,
-                    Some(json!({
-                        "tool_id": decision.tool_id,
-                        "status": "Denied",
-                        "reason": "Repair feedback already embeds previous workspace.read output_preview; workspace.read is not progress. Request workspace.write or record a concrete blocker TODO.",
-                    })),
-                )?;
-                continue;
-            }
-            if let Some(reason) =
-                workspace_read_rejection_reason_from_selected_todo(&record.goal, &decision.input)
-            {
-                store.tasks().append_task_event_with_payload(
-                    record,
-                    LedgerEventKind::ToolExecutionDenied,
-                    Some(json!({
-                        "tool_id": decision.tool_id,
-                        "status": "Denied",
-                        "reason": reason,
-                    })),
-                )?;
-                continue;
-            }
-        }
-        if decision.tool_id == WORKSPACE_READ_TOOL_ID
-            && task_goal_requires_workspace_write_proposal(&record.goal)
-            && (run_has_workspace_read_for_same_path_without_write_proposal(
-                store,
-                record,
-                &decision.input,
-            )? || (task_goal_enforces_workspace_read_budget_before_write(&record.goal)
-                && run_workspace_read_count_without_write_proposal(store, record)? >= 2))
-        {
-            store.tasks().append_task_event_with_payload(
-                record,
-                LedgerEventKind::ToolExecutionDenied,
-                Some(json!({
-                    "tool_id": decision.tool_id,
-                    "status": "Denied",
-                    "reason": "Additional workspace.read is not progress under the current read budget; use the verified context or revise the inputs or objective.",
-                })),
-            )?;
-            continue;
-        }
         let execution_input = if decision.tool_id == GIT_COMMIT_TOOL_ID {
             match runtime_git_commit_execution_input(
                 store,
@@ -3145,6 +3081,9 @@ fn workspace_read_intent_runtime_rejection_reason(
                 ));
             }
         }
+        // The admitted typed policy is authoritative. Goal text cannot add a
+        // second, project-specific interpretation after this intersection.
+        return Ok(None);
     }
     if !task_requires_workspace_write_proposal(record) {
         return Ok(None);
@@ -6591,6 +6530,56 @@ mod mcp_approval_lock_tests {
             assert_eq!(payload["progress_outcome"]["workspace_mutation_proposed"], false);
             assert!(!events.iter().any(|event| event.kind == LedgerEventKind::WorkspacePatchProposed));
             assert_eq!(std::fs::read_to_string(file).unwrap(), original);
+        }
+    }
+
+    #[test]
+    fn explicit_read_admission_is_not_overridden_by_a_second_goal_text_gate() {
+        for requires_write in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let store = BrownieStore::new(temp.path());
+            std::fs::write(temp.path().join("notes.txt"), "verified notes\n").unwrap();
+            let mut record = test_task_record();
+            record.goal = "Update notes.txt with the requested correction.\n- read_budget_repair_policy: use the previous preview\n- previous_workspace_read_preview_0: old preview\n".into();
+            record.execution_constraints = Some(brownie_protocol::TaskExecutionConstraints {
+                read_paths: Some(vec!["notes.txt".into()]),
+                max_workspace_reads: Some(1),
+                requires_workspace_write_proposal: requires_write,
+                ..Default::default()
+            });
+            assert!(task_goal_requires_workspace_write_proposal(&record.goal));
+            let input = json!({"path":"notes.txt"});
+            assert!(
+                workspace_read_intent_runtime_rejection_reason(&store, &record, &input)
+                    .unwrap()
+                    .is_none()
+            );
+            let intent = json!({"tool_requests":[{"tool_id":WORKSPACE_READ_TOOL_ID,"reason":"Read admitted context","input":input}]});
+            let assistant = format!("```brownie-tool-intent\n{intent}\n```");
+            append_tool_intent_events(&store, &record, &write_policy(), &assistant).unwrap();
+            handle_approved_workspace_intents(&store, &record, &write_policy(), &assistant)
+                .unwrap();
+            let events = store.tasks().read_ledger_events(&record.run_id).unwrap();
+            assert!(
+                events.iter().any(
+                    |event| event.kind == LedgerEventKind::ToolExecutionCompleted
+                        && event
+                            .payload
+                            .as_ref()
+                            .and_then(|payload| payload.get("tool_id"))
+                            .and_then(Value::as_str)
+                            == Some(WORKSPACE_READ_TOOL_ID)
+                ),
+                "admitted read must actually execute"
+            );
+            assert!(workspace_read_intent_runtime_rejection_reason(
+                &store,
+                &record,
+                &json!({"path":"notes.txt"})
+            )
+            .unwrap()
+            .unwrap()
+            .contains("budget exhausted"));
         }
     }
 
