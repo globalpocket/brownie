@@ -6,7 +6,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { validateTodoDecompositionText } from './guard-todo-decomposition.mjs';
-import { validateQueueApplyCandidate, validateDecompositionTransition, validateRuntimeProposalRequest, validateQueueRepairTransition } from './repair-todo-decomposition.mjs';
+import { validateQueueApplyCandidate, validateDecompositionTransition, validateRuntimeProposalRequest, validateQueueRepairTransition, validateDecompositionLeaves, uncheckedTodoBlocks } from './repair-todo-decomposition.mjs';
 
 test('Runtime proposal endpoint rejects decomposition of an unrelated parent without writing', t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-bound-parent-'));
@@ -2010,5 +2010,131 @@ for (const fixture of migratedQueueRepairCases) {
     const validate = () => validateQueueRepairTransition(fixture.current, fixture.candidate);
     if (fixture.valid) assert.doesNotThrow(validate);
     else assert.throws(validate, /queue repair/);
+  });
+}
+
+// Original Runtime decomposition cases; old-text trailing whitespace is normalized
+// to the explicit selected-block contract, without changing leaf material.
+const migratedDecompositionCases = [
+  {
+    "name": "decompose_todo_requires_parent_source_and_verification:0",
+    "selected": "- [ ] TODO-decompose-blocked-queue-abc123: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs.",
+    "old_text": "- [ ] TODO-other: Decompose unrelated work.",
+    "new_text": "- [ ] E-15b-a: Patch only `scripts/example.mjs`.\n  Route: implementation.\n  Source TODO: TODO-decompose-blocked-queue-abc123.\n  Depends on: <none>.\n  Completion condition: the bounded example patch is implemented and verified.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root check`.\n",
+    "valid": false
+  },
+  {
+    "name": "decompose_todo_requires_parent_source_and_verification:1",
+    "selected": "- [ ] TODO-decompose-blocked-queue-abc123: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs.",
+    "old_text": "- [ ] TODO-decompose-blocked-queue-abc123: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs.",
+    "new_text": "- [ ] E-15b-a: Patch one file.\n  Route: implementation.\n  Completion condition: the bounded example patch is implemented and verified.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root check`.\n",
+    "valid": false
+  },
+  {
+    "name": "decompose_todo_requires_parent_source_and_verification:2",
+    "selected": "- [ ] TODO-decompose-blocked-queue-abc123: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs.",
+    "old_text": "- [ ] TODO-decompose-blocked-queue-abc123: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs.",
+    "new_text": "- [ ] E-15b-a: Patch only `scripts/example.mjs`.\n  Route: implementation.\n  Source TODO: TODO-other.\n  Depends on: <none>.\n  Completion condition: the bounded example patch is implemented and verified.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root check`.\n",
+    "valid": false
+  },
+  {
+    "name": "decompose_todo_requires_parent_source_and_verification:3",
+    "selected": "- [ ] TODO-decompose-blocked-queue-abc123: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs.",
+    "old_text": "- [ ] TODO-decompose-blocked-queue-abc123: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs.",
+    "new_text": "- [ ] E-15b-a: Patch one file.\n  Route: implementation.\n  Source TODO: TODO-decompose-blocked-queue-abc123.\n  Depends on: <none>.\n  Completion condition: the bounded example patch is implemented and verified.\n  Forbidden changes: do not edit unrelated files.\n",
+    "valid": false
+  },
+  {
+    "name": "decompose_todo_validates_each_leaf_independently:0",
+    "selected": "- [ ] TODO-decompose-blocked-queue-abc123: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs.",
+    "old_text": "- [ ] TODO-decompose-blocked-queue-abc123: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs.",
+    "new_text": "- [ ] E-15b-a: Patch only `scripts/example-a.mjs`.\n  Route: implementation.\n  Source TODO: TODO-decompose-blocked-queue-abc123.\n  Depends on: <none>.\n  Completion condition: the bounded example patch is implemented and verified.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root check`.\n- [ ] E-15b-b: Patch only `scripts/example-b.mjs`.\n  Route: implementation.\n  Depends on: <none>.\n  Completion condition: the bounded example patch is implemented and verified.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root check`.\n",
+    "valid": false
+  },
+  {
+    "name": "decompose_todo_rejects_kept_broad_decomposition_item:0",
+    "selected": "- [ ] TODO-decompose-blocked-queue-abc123: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs.",
+    "old_text": "- [ ] TODO-decompose-blocked-queue-abc123: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs.",
+    "new_text": "- [ ] TODO-decompose-blocked-queue-abc123: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs.\n  Route: todo-decomposition.\n  Source TODO: TODO-decompose-blocked-queue-abc123.\n  Depends on: <none>.\n  Completion condition: the broad item is replaced.\n  Forbidden changes: do not edit implementation files.\n  Verification: run `pnpm --workspace-root check`.\n",
+    "valid": false
+  },
+  {
+    "name": "decompose_todo_rejects_unscoped_leaf:0",
+    "selected": "- [ ] TODO-decompose-blocked-queue-abc123: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs.",
+    "old_text": "- [ ] TODO-decompose-blocked-queue-abc123: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs.",
+    "new_text": "- [ ] E-15b-a: Fix the release evidence problems.\n  Route: implementation.\n  Source TODO: TODO-decompose-blocked-queue-abc123.\n  Depends on: <none>.\n  Completion condition: the bounded example patch is implemented and verified.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root check`.\n",
+    "valid": false
+  },
+  {
+    "name": "decompose_todo_allows_structured_leaf_todo_patch:0",
+    "selected": "- [ ] TODO-decompose-blocked-queue-abc123: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs.",
+    "old_text": "- [ ] TODO-decompose-blocked-queue-abc123: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs.",
+    "new_text": "- [ ] E-15b-a: Patch only `scripts/example.mjs`.\n  Route: implementation.\n  Source TODO: TODO-decompose-blocked-queue-abc123.\n  Depends on: <none>.\n  Completion condition: the bounded example patch is implemented and verified.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root check`.\n",
+    "valid": true
+  },
+  {
+    "name": "decompose_todo_with_repair_feedback_allows_new_leaf_ids:0",
+    "selected": "- [ ] E-23a-replan: Patch only `.brownie/todo.md` to split a stalled leaf:\n  Route: todo-decomposition.\n  Source TODO: E-23a-target-01.\n  Depends on: <none>.\n  Completion condition: replace the stalled leaf with executable children.\n  Forbidden changes: do not edit implementation files.\n  Verification: run `pnpm --workspace-root guard:todo-decomposition`.",
+    "old_text": "- [ ] E-23a-replan: Patch only `.brownie/todo.md` to split a stalled leaf:\n  Route: todo-decomposition.\n  Source TODO: E-23a-target-01.\n  Depends on: <none>.\n  Completion condition: replace the stalled leaf with executable children.\n  Forbidden changes: do not edit implementation files.\n  Verification: run `pnpm --workspace-root guard:todo-decomposition`.",
+    "new_text": "- [ ] E-23a-target-01-impl: Patch only `scripts/release-local-artifact.mjs`:\n  Route: implementation.\n  Source TODO: E-23a-replan.\n  Depends on: <none>.\n  Completion condition: the bounded producer change is implemented.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root release:local-artifact:test`.\n- [ ] E-23a-target-01-test: Patch only `scripts/release-local-artifact.test.mjs`:\n  Route: implementation.\n  Source TODO: E-23a-replan.\n  Depends on: E-23a-target-01-impl.\n  Completion condition: the bounded producer behavior is covered.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root release:local-artifact:test`.\n",
+    "valid": true
+  },
+  {
+    "name": "decompose_todo_with_repair_feedback_rejects_duplicate_leaf_ids:0",
+    "selected": "- [ ] E-23a-replan: Patch only `.brownie/todo.md` to split a stalled leaf:\n  Route: todo-decomposition.\n  Source TODO: E-23a-target-01.\n  Depends on: <none>.\n  Completion condition: replace the stalled leaf with executable children.\n  Forbidden changes: do not edit implementation files.\n  Verification: run `pnpm --workspace-root guard:todo-decomposition`.",
+    "old_text": "- [ ] E-23a-replan: Patch only `.brownie/todo.md` to split a stalled leaf:\n  Route: todo-decomposition.\n  Source TODO: E-23a-target-01.\n  Depends on: <none>.\n  Completion condition: replace the stalled leaf with executable children.\n  Forbidden changes: do not edit implementation files.\n  Verification: run `pnpm --workspace-root guard:todo-decomposition`.",
+    "new_text": "- [ ] E-23a-target-01-impl: Patch only `scripts/release-local-artifact.mjs`:\n  Route: implementation.\n  Source TODO: E-23a-replan.\n  Depends on: <none>.\n  Completion condition: the bounded producer change is implemented.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root release:local-artifact:test`.\n- [ ] E-23a-target-01-impl: Patch only `scripts/release-local-artifact.mjs`:\n  Route: implementation.\n  Source TODO: E-23a-replan.\n  Depends on: <none>.\n  Completion condition: the bounded producer change is implemented.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root release:local-artifact:test`.\n",
+    "valid": false
+  },
+  {
+    "name": "implementation_todo_can_patch_todo_md_when_replacing_selected_todo_with_valid_leaf_decomposition:0",
+    "selected": "- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs` to make generated soak evidence satisfied from a bounded stateful fixture:\n  Route: implementation.\n  Source TODO: E-15d-runtime-soak-evidence-stateful.\n  Depends on: <none>.\n  Completion condition: generated runtime operational evidence has a satisfied soak_test section.\n  Forbidden changes: do not edit release-ready status.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.",
+    "old_text": "- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs` to make generated soak evidence satisfied from a bounded stateful fixture:\n  Route: implementation.\n  Source TODO: E-15d-runtime-soak-evidence-stateful.\n  Depends on: <none>.\n  Completion condition: generated runtime operational evidence has a satisfied soak_test section.\n  Forbidden changes: do not edit release-ready status.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.",
+    "new_text": "- [ ] E-15d-soak-section-fixture-shape: Patch only `scripts/release-runtime-operational-evidence.mjs` to add the bounded stateful soak fixture shape:\n  Route: implementation.\n  Source TODO: E-15d-soak-section-collector.\n  Depends on: <none>.\n  Completion condition: generated soak evidence contains sanitized stateful step names without raw process output.\n  Forbidden changes: do not edit release-ready status.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.\n",
+    "valid": true
+  },
+  {
+    "name": "implementation_todo_decomposition_attempt_must_not_keep_selected_todo_pending:0",
+    "selected": "- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs` to make generated soak evidence satisfied from a bounded stateful fixture:\n  Route: implementation.\n  Source TODO: E-15d-runtime-soak-evidence-stateful.\n  Depends on: <none>.\n  Completion condition: generated runtime operational evidence has a satisfied soak_test section.\n  Forbidden changes: do not edit release-ready status.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.",
+    "old_text": "- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs` to make generated soak evidence satisfied from a bounded stateful fixture:\n  Route: implementation.\n  Source TODO: E-15d-runtime-soak-evidence-stateful.\n  Depends on: <none>.\n  Completion condition: generated runtime operational evidence has a satisfied soak_test section.\n  Forbidden changes: do not edit release-ready status.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.",
+    "new_text": "- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs` to make generated soak evidence satisfied from a bounded stateful fixture:\n  Route: implementation.\n  Source TODO: E-15d-runtime-soak-evidence-stateful.\n  Depends on: <none>.\n  Completion condition: generated runtime operational evidence has a satisfied soak_test section.\n  Forbidden changes: do not edit release-ready status.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.\n",
+    "valid": false
+  },
+  {
+    "name": "concrete_patch_leaf_cannot_be_refined_to_todo_md_by_generic_guard_policy:0",
+    "selected": "- [ ] E-15e-release-readiness-audit-sync-leaf: Patch only `docs/architecture/runtime-release-readiness-audit.json`:\n  Route: documentation.\n  Source TODO: E-15e-release-contract-audit-phase-resync.\n  Depends on: E-15e-release-contract-doc-sync-leaf.\n  Completion condition: runtime release readiness audit records the current fail-closed evidence state without claiming Runtime Product Ready.\n  Forbidden changes: do not mark Runtime Product Ready and do not remove owner-controlled independent review blockers.\n  Verification: run `pnpm --workspace-root guard:runtime-release-readiness`.",
+    "old_text": "- [ ] E-15e-release-readiness-audit-sync-leaf: Patch only `docs/architecture/runtime-release-readiness-audit.json`:\n  Route: documentation.\n  Source TODO: E-15e-release-contract-audit-phase-resync.\n  Depends on: E-15e-release-contract-doc-sync-leaf.\n  Completion condition: runtime release readiness audit records the current fail-closed evidence state without claiming Runtime Product Ready.\n  Forbidden changes: do not mark Runtime Product Ready and do not remove owner-controlled independent review blockers.\n  Verification: run `pnpm --workspace-root guard:runtime-release-readiness`.",
+    "new_text": "- [ ] E-15e-release-readiness-audit-sync-blocker: Read `docs/architecture/runtime-release-readiness-audit.json` to extract current evidence state:\n  Route: documentation.\n  Source TODO: E-15e-release-readiness-audit-sync-leaf.\n  Depends on: E-15e-release-contract-doc-sync-leaf.\n  Completion condition: extract all evidence entries and status fields from the JSON file.\n  Forbidden changes: do not modify the file content.\n  Verification: inspect `docs/architecture/runtime-release-readiness-audit.json` for evidence entries.",
+    "valid": false
+  }
+];
+for (const fixture of migratedDecompositionCases) {
+  test(`external decomposition: ${fixture.name}`, () => {
+    const validate = () => {
+      validateDecompositionTransition(fixture.selected, fixture.selected, [{old_text: fixture.old_text, new_text: fixture.new_text}]);
+      validateDecompositionLeaves(fixture.new_text);
+    };
+    if (fixture.valid) assert.doesNotThrow(validate);
+    else assert.throws(validate);
+  });
+}
+
+const migratedQueueBlockCases = [
+  {
+    "name": "todo_block_detection_ignores_inline_task_marker_examples",
+    "text": "## Queue protocol\n\n- Pending work is represented by unchecked Markdown task items: `- [ ] ...`.\n\n## Product Ready Blocking Queue\n\n- [ ] E-16a: Make the runtime operational Golden Journey fixture exercise the full proposal/apply path\n  Route: implementation.\n"
+  },
+  {
+    "name": "todo_block_detection_stops_at_next_heading",
+    "text": "- [ ] E-14: Perform final Product Ready judgment.\n  Route: release-judgment.\n\n## Tracked but not Product Ready blocking\n\n- Phase Loop Supervisor as a maintained BDK component.\n"
+  }
+];
+for (const fixture of migratedQueueBlockCases) {
+  test(`external queue blocks: ${fixture.name}`, () => {
+    const blocks = uncheckedTodoBlocks(fixture.text);
+    assert.equal(blocks.length, 1);
+    assert.match(blocks[0], /^- \[ \] E-/u);
+    assert.match(blocks[0], /Route:/u);
+    assert.doesNotMatch(blocks[0], /Pending work is represented|Tracked but not Product Ready|Phase Loop Supervisor/u);
   });
 }

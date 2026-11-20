@@ -159,6 +159,32 @@ export function validateQueueRepairTransition(current, candidate) {
   }
 }
 
+export function validateDecompositionLeaves(candidate) {
+  const leaves = uncheckedTodoBlocks(candidate);
+  if (!leaves.length) throw new Error('decomposition requires unchecked leaves');
+  for (const leaf of leaves) {
+    for (const field of ['Source TODO:', 'Route:', 'Completion condition:', 'Depends on:', 'Forbidden changes:', 'Verification:']) {
+      const lines = leaf.split('\n').map(line => line.trim()).filter(line => line.startsWith(field));
+      if (lines.length !== 1 || !lines[0].slice(field.length).trim()) throw new Error(`decomposition leaf requires one nonempty ${field}`);
+    }
+    const lower = leaf.toLowerCase();
+    const title = firstLine(leaf).replace(/^(?:[-*]|\d+[.)])\s+\[ \]\s+[^:]+:\s*/u, '');
+    if (/^(?:read |inspect |investigate |analy[sz]e |確認|調査)/iu.test(title) && !lower.includes('fail-closed')) {
+      throw new Error('decomposition leaf cannot be read-only discovery');
+    }
+    if (!/\b(?:Patch|Create) only `[^`]+`/u.test(firstLine(leaf)) && !/blocker|fail-closed/u.test(lower)) {
+      throw new Error('decomposition leaf requires bounded scope or explicit blocker');
+    }
+    const verification = leaf.split('\n').map(line => line.trim()).find(line => line.startsWith('Verification:')).toLowerCase();
+    if (!/pnpm --workspace-root |cargo fmt |cargo check|cargo test|node (?:--test )?scripts\/|inspect |blocker|fail-closed/u.test(verification)) {
+      throw new Error('decomposition leaf requires bounded verification');
+    }
+    if (Buffer.byteLength(leaf) > 1800 || leaf.split('\n').length > 12 || todoId(leaf).includes('TODO-decompose-blocked-queue')) {
+      throw new Error('decomposition leaf must remain bounded');
+    }
+  }
+}
+
 export function validateRuntimeProposalRequest(bytes, workspaceRoot) {
   if (bytes.length > 1024 * 1024) throw new Error('runtime validation input exceeds limit');
   const request = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
@@ -188,6 +214,7 @@ export function validateRuntimeProposalRequest(bytes, workspaceRoot) {
   if (metadata.bdk_state === 'decompose_todo') {
     if (proposal.operation !== 'patch_file') throw new Error('decomposition requires a bounded patch');
     validateDecompositionTransition(metadata.selected_todo_text, candidate, params.patch_hunks);
+    validateDecompositionLeaves(params.patch_hunks[0].new_text);
   }
   if (proposal.operation === 'patch_file') {
     if (!Array.isArray(params.patch_hunks) || params.patch_hunks.length < 1 || params.patch_hunks.length > 5) throw new Error('missing bounded patch material');
@@ -382,7 +409,7 @@ function packageScripts() {
   }
 }
 
-function uncheckedTodoBlocks(text) {
+export function uncheckedTodoBlocks(text) {
   const starts = [];
   const pattern = /^(?:[-*]|\d+[.)])\s+\[[ xX]\]\s+/gm;
   let match;
@@ -391,7 +418,7 @@ function uncheckedTodoBlocks(text) {
   }
   return starts.map((start, index) => {
     const end = index + 1 < starts.length ? starts[index + 1] : text.length;
-    return text.slice(start, end).trimEnd();
+    return text.slice(start, end).split(/^## /mu, 1)[0].trimEnd();
   }).filter((block) => /^(?:[-*]|\d+[.)])\s+\[\s\]\s+/u.test(block));
 }
 

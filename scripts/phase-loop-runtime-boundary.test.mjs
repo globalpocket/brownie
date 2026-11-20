@@ -666,10 +666,15 @@ test('Runtime does not decide whether queue repair may introduce new leaf IDs', 
 test('Runtime read admission uses typed constraints without project prompt interpretation', () => {
   const source = fs.readFileSync(path.join(repoRoot, 'crates/brownie-runtime/src/controlled_tool_execution.rs'), 'utf8');
   const start = source.indexOf('fn workspace_read_intent_runtime_rejection_reason(');
-  const end = source.indexOf('\nfn todo_md_write_looks_like_decomposition_attempt(', start);
+  const end = source.indexOf('\nfn selected_todo_requires_decomposition_only(', start);
   assert.ok(start > 0 && end > start, 'locate the complete read admission function');
   const admission = source.slice(start, end);
   assert.match(admission, /record\.execution_constraints/u);
   assert.match(admission, /read_budget_exhausted/u);
   assert.doesNotMatch(admission, /selected_todo|record\.goal|leaf_required_next_tool|previous_workspace_read_preview/u);
+});
+
+test('Runtime does not validate project decomposition leaf metadata', () => {
+  const source = fs.readFileSync(path.join(repoRoot, 'crates/brownie-runtime/src/controlled_tool_execution.rs'), 'utf8');
+  assert.doesNotMatch(source, /fn todo_decomposition_workspace_write_rejection_reason|fn todo_repair_leaf_integrity_rejection_reason|fn leaf_verification_lines_are_allowed/u);
 });
