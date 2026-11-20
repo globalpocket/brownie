@@ -379,9 +379,13 @@ export class RuntimeClient {
       verification_recovery_retry_source?: unknown;
       llm_provider_failure_retry_source?: unknown;
       product_continuation_source?: unknown;
+      execution_constraints?: unknown;
     } = {
       goal: params.goal,
     };
+    if (params.executionConstraints !== undefined) {
+      requestParams.execution_constraints = params.executionConstraints;
+    }
     if (params.modeId !== undefined) {
       requestParams.mode_id = params.modeId;
     }

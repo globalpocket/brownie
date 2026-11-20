@@ -87,9 +87,21 @@ fn execute(cli: Cli, client: &RuntimeClient) -> CliOutput {
             ),
             stderr: String::new(),
         },
-        CliCommand::RunFile { path } => match read_run_file_objective(&path) {
-            Ok(objective) => {
-                let command = CliCommand::Run { objective };
+        CliCommand::RunFile {
+            path,
+            constraints_path,
+        } => match read_run_file_objective(&path).and_then(|objective| {
+            let constraints = constraints_path
+                .as_deref()
+                .map(read_execution_constraints)
+                .transpose()?;
+            Ok((objective, constraints))
+        }) {
+            Ok((objective, execution_constraints)) => {
+                let command = CliCommand::Run {
+                    objective,
+                    execution_constraints,
+                };
                 match client.invoke(&command, cli.json) {
                     Ok(message) => CliOutput {
                         exit_code: ExitCode::Success,
@@ -125,6 +137,7 @@ fn execute(cli: Cli, client: &RuntimeClient) -> CliOutput {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum RunFileObjectiveError {
+    InvalidConstraints,
     InvalidMaxBytes,
     InvalidUtf8,
     MetadataUnavailable,
@@ -137,6 +150,9 @@ enum RunFileObjectiveError {
 impl RunFileObjectiveError {
     fn message(&self) -> String {
         match self {
+            RunFileObjectiveError::InvalidConstraints => {
+                "invalid execution constraints JSON or scope".into()
+            }
             RunFileObjectiveError::InvalidMaxBytes => {
                 format!("{RUN_FILE_MAX_BYTES_ENV} must be a positive integer byte limit")
             }
@@ -158,6 +174,7 @@ impl RunFileObjectiveError {
 
     fn reason(&self) -> &str {
         match self {
+            RunFileObjectiveError::InvalidConstraints => "invalid_execution_constraints",
             RunFileObjectiveError::InvalidMaxBytes => "invalid_max_bytes",
             RunFileObjectiveError::InvalidUtf8 => "invalid_utf8",
             RunFileObjectiveError::MetadataUnavailable => "metadata_unavailable",
@@ -167,6 +184,36 @@ impl RunFileObjectiveError {
             RunFileObjectiveError::TooLarge { .. } => "file_too_large",
         }
     }
+}
+
+fn read_execution_constraints(
+    path: &str,
+) -> Result<brownie_protocol::TaskExecutionConstraints, RunFileObjectiveError> {
+    const LIMIT: u64 = 65_536;
+    let file = open_run_file(path)?;
+    if !file
+        .metadata()
+        .map_err(|_| RunFileObjectiveError::MetadataUnavailable)?
+        .is_file()
+    {
+        return Err(RunFileObjectiveError::NotRegularFile);
+    }
+    let mut bytes = Vec::new();
+    file.take(LIMIT + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| RunFileObjectiveError::ReadFailed)?;
+    if bytes.len() as u64 > LIMIT {
+        return Err(RunFileObjectiveError::TooLarge {
+            bytes: bytes.len() as u64,
+            max_bytes: LIMIT,
+        });
+    }
+    let constraints: brownie_protocol::TaskExecutionConstraints =
+        serde_json::from_slice(&bytes).map_err(|_| RunFileObjectiveError::InvalidConstraints)?;
+    constraints
+        .validate()
+        .map_err(|_| RunFileObjectiveError::InvalidConstraints)?;
+    Ok(constraints)
 }
 
 fn read_run_file_objective(path: &str) -> Result<String, RunFileObjectiveError> {
@@ -486,6 +533,62 @@ mod tests {
     use std::time::Duration;
 
     #[test]
+    fn execution_constraints_file_is_explicit_bounded_and_validated() {
+        let command = Cli::parse([
+            "brownie",
+            "run",
+            "--file",
+            "goal.md",
+            "--constraints-file",
+            "scope.json",
+        ])
+        .unwrap()
+        .command;
+        assert_eq!(
+            command,
+            CliCommand::RunFile {
+                path: "goal.md".into(),
+                constraints_path: Some("scope.json".into())
+            }
+        );
+        let path =
+            std::env::temp_dir().join(format!("brownie-constraints-{}.json", uuid::Uuid::new_v4()));
+        struct Cleanup(std::path::PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = fs::remove_file(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(path.clone());
+        let path_text = path.to_str().unwrap();
+        fs::write(
+            &path,
+            br#"{"write_paths":["notes.txt"],"max_workspace_reads":0}"#,
+        )
+        .unwrap();
+        let constraints = read_execution_constraints(path_text).unwrap();
+        assert_eq!(constraints.write_paths, Some(vec!["notes.txt".into()]));
+        assert_eq!(constraints.max_workspace_reads, Some(0));
+        for invalid in [
+            r#"{"write_paths":["../outside"]}"#,
+            r#"{"max_workspace_reads":-1}"#,
+            r#"{"unexpected":true}"#,
+            "not-json",
+        ] {
+            fs::write(&path, invalid).unwrap();
+            assert!(matches!(
+                read_execution_constraints(path_text),
+                Err(RunFileObjectiveError::InvalidConstraints)
+            ));
+        }
+        fs::write(&path, vec![b' '; 65_537]).unwrap();
+        assert!(matches!(
+            read_execution_constraints(path_text),
+            Err(RunFileObjectiveError::TooLarge { .. })
+        ));
+    }
+
+    #[test]
     fn help_names_run_and_not_develop() {
         let help = Cli::help();
         assert!(help.contains("run <objective>"));
@@ -523,6 +626,7 @@ mod tests {
         assert_eq!(
             run_help_objective.command,
             CliCommand::Run {
+                execution_constraints: None,
                 objective: "--help".into()
             }
         );
@@ -534,6 +638,7 @@ mod tests {
         assert_eq!(
             run_file.command,
             CliCommand::RunFile {
+                constraints_path: None,
                 path: "sample.md".into()
             }
         );
@@ -542,6 +647,7 @@ mod tests {
         assert_eq!(
             short_run_file.command,
             CliCommand::RunFile {
+                constraints_path: None,
                 path: "sample.md".into()
             }
         );
@@ -576,6 +682,7 @@ mod tests {
         assert_eq!(
             run.command,
             CliCommand::Run {
+                execution_constraints: None,
                 objective: "summarize this repository".into()
             }
         );
@@ -616,6 +723,7 @@ mod tests {
         assert_eq!(
             json_objective.command,
             CliCommand::Run {
+                execution_constraints: None,
                 objective: "analyze the --json output format".into()
             }
         );
@@ -626,6 +734,7 @@ mod tests {
         assert_eq!(
             help_objective.command,
             CliCommand::Run {
+                execution_constraints: None,
                 objective: "explain --help behavior".into()
             }
         );
@@ -635,6 +744,7 @@ mod tests {
         assert_eq!(
             version_objective.command,
             CliCommand::Run {
+                execution_constraints: None,
                 objective: "compare -V and --version".into()
             }
         );
@@ -648,6 +758,7 @@ mod tests {
         assert_eq!(
             parsed.command,
             CliCommand::Run {
+                execution_constraints: None,
                 objective: "analyze --json output".into()
             }
         );

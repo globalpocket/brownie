@@ -26,6 +26,7 @@ impl TaskStore {
             || record.run_id != expected.run_id
             || record.status != expected.status
             || record.updated_at != expected.updated_at
+            || record.execution_constraints != expected.execution_constraints
         {
             return Ok(None);
         }
@@ -55,6 +56,7 @@ mod tests {
     fn created(store: &TaskStore) -> TaskRecord {
         store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "atomic standard admission".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -64,6 +66,183 @@ mod tests {
                 product_continuation_source: None,
             })
             .expect("start task")
+    }
+
+    fn constrained(store: &TaskStore) -> TaskRecord {
+        store
+            .start_task(TaskStartParams {
+                execution_constraints: Some(brownie_protocol::TaskExecutionConstraints {
+                    write_paths: Some(vec!["notes.txt".into()]),
+                    max_workspace_reads: Some(2),
+                    ..Default::default()
+                }),
+                goal: "update notes".into(),
+                mode_id: None,
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("constrained task")
+    }
+
+    #[test]
+    fn execution_constraints_are_inherited_by_child_and_provider_recovery() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = TaskStore::new(temp.path());
+        let parent = constrained(&store);
+        let child = store
+            .start_child_task(ChildTaskStartParams {
+                goal: "child notes".into(),
+                mode_id: None,
+                parent_task_id: parent.task_id.clone(),
+                parent_run_id: parent.run_id.clone(),
+                source_candidate_id: "candidate".into(),
+                source_handoff_envelope_id: "handoff".into(),
+                source_handoff_envelope_fingerprint: "fixture-fingerprint".into(),
+                source_intent_summary: None,
+                recovery_cycle_provenance: None,
+                external_modepack_child_provenance: None,
+            })
+            .unwrap();
+        assert_eq!(child.execution_constraints, parent.execution_constraints);
+        let params = LlmProviderFailureRetryTaskStartParams {
+            goal: "retry notes".into(),
+            mode_id: None,
+            provenance: LlmProviderFailureRetryProvenance {
+                source_task_id: parent.task_id.clone(),
+                source_run_id: parent.run_id.clone(),
+                failure_fingerprint:
+                    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+                failure_class: "transport".into(),
+                provider: "fixture".into(),
+                model: "fixture".into(),
+                request_phase: "initial".into(),
+                retryable: true,
+            },
+        };
+        let recovery = store
+            .start_llm_provider_failure_retry_task(params.clone())
+            .unwrap();
+        assert_eq!(
+            recovery.record.execution_constraints,
+            parent.execution_constraints
+        );
+        let replay = TaskStore::new(temp.path())
+            .start_llm_provider_failure_retry_task(params)
+            .unwrap();
+        assert!(replay.replayed);
+        assert_eq!(replay.record, recovery.record);
+    }
+
+    #[test]
+    fn execution_constraints_missing_recovery_source_cannot_create_unrestricted_child() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = TaskStore::new(temp.path());
+        let result = store.start_child_task(ChildTaskStartParams {
+            goal: "child notes".into(),
+            mode_id: None,
+            parent_task_id: "missing".into(),
+            parent_run_id: "missing".into(),
+            source_candidate_id: "candidate".into(),
+            source_handoff_envelope_id: "handoff".into(),
+            source_handoff_envelope_fingerprint: "fixture-fingerprint".into(),
+            source_intent_summary: None,
+            recovery_cycle_provenance: None,
+            external_modepack_child_provenance: None,
+        });
+        assert!(result.is_err());
+        assert!(store.list_tasks().unwrap().is_empty());
+    }
+
+    #[test]
+    fn execution_constraints_survive_reopen_and_running_transition() {
+        let temp = tempfile::tempdir().unwrap();
+        let record = constrained(&TaskStore::new(temp.path()));
+        let reopened = TaskStore::new(temp.path());
+        let loaded = reopened.get_task(&record.task_id).unwrap().unwrap();
+        assert_eq!(loaded.execution_constraints, record.execution_constraints);
+        let running = reopened
+            .admit_standard_task_run(&loaded, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(running.execution_constraints, record.execution_constraints);
+        let events = reopened.read_ledger_events(&record.run_id).unwrap();
+        let started = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::TaskStarted)
+            .unwrap();
+        assert_eq!(
+            started.payload.as_ref().unwrap()["execution_constraints"],
+            serde_json::to_value(record.execution_constraints.unwrap()).unwrap()
+        );
+    }
+
+    #[test]
+    fn execution_constraints_reject_removed_changed_and_unbound_state() {
+        for replacement in [
+            serde_json::Value::Null,
+            serde_json::json!({"write_paths": ["other.txt"]}),
+            serde_json::json!({"write_paths": ["../escape"]}),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let store = TaskStore::new(temp.path());
+            let record = constrained(&store);
+            let state_path = store.run_dir(&record.run_id).join("state.json");
+            let mut state: serde_json::Value =
+                serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+            state["execution_constraints"] = replacement;
+            fs::write(&state_path, serde_json::to_vec(&state).unwrap()).unwrap();
+            assert!(TaskStore::new(temp.path())
+                .get_task(&record.task_id)
+                .is_err());
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let store = TaskStore::new(temp.path());
+        let record = constrained(&store);
+        fs::remove_file(store.run_dir(&record.run_id).join("ledger.jsonl")).unwrap();
+        assert!(store.get_task(&record.task_id).is_err());
+    }
+
+    #[test]
+    fn execution_constraints_reject_stale_admission_without_running_event() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = TaskStore::new(temp.path());
+        let record = constrained(&store);
+        let mut stale = record.clone();
+        stale.execution_constraints = None;
+        assert!(store
+            .admit_standard_task_run(&stale, None)
+            .unwrap()
+            .is_none());
+        assert!(!store
+            .read_ledger_events(&record.run_id)
+            .unwrap()
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::TaskRunning));
+        assert_eq!(store.get_task(&record.task_id).unwrap().unwrap(), record);
+    }
+
+    #[test]
+    fn execution_constraints_invalid_start_has_no_persisted_task() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = TaskStore::new(temp.path());
+        let result = store.start_task(TaskStartParams {
+            execution_constraints: Some(brownie_protocol::TaskExecutionConstraints {
+                write_paths: Some(vec!["../escape".into()]),
+                ..Default::default()
+            }),
+            goal: "invalid scope".into(),
+            mode_id: None,
+            verification_recovery_source: None,
+            patch_apply_recovery_source: None,
+            verification_recovery_retry_source: None,
+            llm_provider_failure_retry_source: None,
+            product_continuation_source: None,
+        });
+        assert!(result.is_err());
+        assert!(!store.runs_dir().exists());
     }
 
     #[test]

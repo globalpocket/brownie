@@ -16147,12 +16147,14 @@ metadata = {
     "prompt_max_bytes": prompt_max_bytes,
     "selected_todo_bytes": len(selected_todo.encode("utf-8")),
     "selected_todo_sha256": sha256_text(selected_todo),
+    "selected_todo_text": selected_todo,
     "selected_todo_complete": selected_todo_complete,
     "selected_todo_completion_reason": selected_todo_completion_reason,
     "bdk_state": bdk_state,
     "llm_route": llm_route,
     "context_hints": context_hints,
     "todo_path": str(todo_path),
+    "queue_relative_path": todo_path.resolve().relative_to(workspace_root_path.resolve()).as_posix(),
     "todo_sha256": sha256_text(todo_text),
     "todo_line_count": todo_line_count,
     "todo_snapshot_lines": min(todo_line_count, todo_snapshot_lines),
@@ -16175,7 +16177,11 @@ PY
   then
     return 1
   fi
-  chmod 600 "$output_path" "$meta_path"
+  local constraints_path="${output_path%.prompt.md}.constraints.json"
+  if ! node "$ROOT_DIR/scripts/phase-loop-task-constraints.mjs" "$output_path" "$meta_path" "$constraints_path"; then
+    return 1
+  fi
+  chmod 600 "$output_path" "$meta_path" "$constraints_path"
   sync_parent_dir "$RUN_DIR"
   retire_old_prompt_artifacts
 }
@@ -20655,7 +20661,7 @@ PY
         run_with_portable_timeout "$brownie_timeout_seconds" "$BROWNIE_BIN" --json resume
       fi
     else
-      run_with_portable_timeout "$brownie_timeout_seconds" "$BROWNIE_BIN" --json run --file "$effective_prompt"
+      run_with_portable_timeout "$brownie_timeout_seconds" "$BROWNIE_BIN" --json run --file "$effective_prompt" --constraints-file "${effective_prompt%.prompt.md}.constraints.json"
     fi
   ) > "$stdout_log" 2> "$stderr_log"
   exit_code=$?

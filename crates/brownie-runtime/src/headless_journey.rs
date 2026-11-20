@@ -428,6 +428,11 @@ fn validate_headless_journey_admission(
         return Err("invalid params: journey admission requires exactly one task_start or product_objective_continuation_source".to_string());
     }
     if let Some(task_start) = admission.task_start.as_ref() {
+        if let Some(constraints) = &task_start.execution_constraints {
+            constraints
+                .validate()
+                .map_err(|message| format!("invalid params: {message}"))?;
+        }
         if task_start.goal.trim().is_empty() {
             return Err("invalid params: journey task_start.goal must not be empty".to_string());
         }
@@ -732,7 +737,9 @@ fn headless_journey_start_checkpoint_for_admission_locked(
             ));
         }
         if let Some(record) = matching_tasks.pop() {
-            if record.goal != task_start.goal || record.mode_id.as_deref() != Some(&policy.mode_id)
+            if record.goal != task_start.goal
+                || record.mode_id.as_deref() != Some(&policy.mode_id)
+                || record.execution_constraints != task_start.execution_constraints
             {
                 return Err(error_response(
                     id.clone(),
@@ -746,6 +753,7 @@ fn headless_journey_start_checkpoint_for_admission_locked(
                 .tasks()
                 .start_task_with_headless_run_recovery_identity(
                     TaskStartParams {
+                        execution_constraints: task_start.execution_constraints.clone(),
                         goal: task_start.goal.clone(),
                         mode_id: Some(policy.mode_id.clone()),
                         verification_recovery_source: None,
@@ -2781,6 +2789,11 @@ fn validate_headless_journey_execution(
         }
     }
     if let Some(task_start) = execution.task_start.as_ref() {
+        if let Some(constraints) = &task_start.execution_constraints {
+            constraints
+                .validate()
+                .map_err(|message| format!("invalid params: {message}"))?;
+        }
         if task_start.goal.trim().is_empty() {
             return Err(
                 "invalid params: journey execution task_start.goal must not be empty".to_string(),

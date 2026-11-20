@@ -3658,11 +3658,15 @@ impl TaskStore {
         params: TaskStartParams,
         headless_run_recovery_identity: Option<HeadlessRunRecoveryIdentityEvidence>,
     ) -> Result<TaskRecord> {
+        if let Some(constraints) = &params.execution_constraints {
+            constraints.validate().map_err(anyhow::Error::msg)?;
+        }
         self.ensure_durable_schema()?;
         let now = timestamp()?;
         let task_id = format!("task_{}", Uuid::new_v4());
         let run_id = format!("run_{}", Uuid::new_v4());
         let record = TaskRecord {
+            execution_constraints: params.execution_constraints,
             task_id: task_id.clone(),
             run_id: run_id.clone(),
             goal: params.goal,
@@ -3708,6 +3712,9 @@ impl TaskStore {
                 record.headless_run_recovery_identity.as_ref() == Some(recovery_identity)
             })
             .collect::<Vec<_>>();
+        for record in &matches {
+            self.validate_execution_constraint_binding(record)?;
+        }
         matches.sort_by(|a, b| a.task_id.cmp(&b.task_id).then(a.run_id.cmp(&b.run_id)));
         Ok(matches)
     }
@@ -3718,6 +3725,8 @@ impl TaskStore {
         let task_id = format!("task_{}", Uuid::new_v4());
         let run_id = format!("run_{}", Uuid::new_v4());
         let record = TaskRecord {
+            execution_constraints: self
+                .execution_constraints_for_source_run(&params.parent_run_id)?,
             task_id: task_id.clone(),
             run_id: run_id.clone(),
             goal: params.goal,
@@ -3789,6 +3798,8 @@ impl TaskStore {
         let task_id = format!("task_{}", Uuid::new_v4());
         let run_id = format!("run_{}", Uuid::new_v4());
         let record = TaskRecord {
+            execution_constraints: self
+                .execution_constraints_for_source_run(&params.provenance.source_run_id)?,
             task_id: task_id.clone(),
             run_id: run_id.clone(),
             goal: params.goal,
@@ -3869,6 +3880,8 @@ impl TaskStore {
         let task_id = format!("task_{}", Uuid::new_v4());
         let run_id = format!("run_{}", Uuid::new_v4());
         let record = TaskRecord {
+            execution_constraints: self
+                .execution_constraints_for_source_run(&params.provenance.source_run_id)?,
             task_id: task_id.clone(),
             run_id: run_id.clone(),
             goal: params.goal,
@@ -3956,6 +3969,8 @@ impl TaskStore {
         let task_id = format!("task_{}", Uuid::new_v4());
         let run_id = format!("run_{}", Uuid::new_v4());
         let record = TaskRecord {
+            execution_constraints: self
+                .execution_constraints_for_source_run(&params.provenance.source_run_id)?,
             task_id: task_id.clone(),
             run_id: run_id.clone(),
             goal: params.goal,
@@ -4062,6 +4077,8 @@ impl TaskStore {
         let task_id = format!("task_{}", Uuid::new_v4());
         let run_id = format!("run_{}", Uuid::new_v4());
         let record = TaskRecord {
+            execution_constraints: self
+                .execution_constraints_for_source_run(&params.provenance.source_run_id)?,
             task_id: task_id.clone(),
             run_id: run_id.clone(),
             goal: params.goal,
@@ -4160,6 +4177,8 @@ impl TaskStore {
         let task_id = format!("task_{}", Uuid::new_v4());
         let run_id = format!("run_{}", Uuid::new_v4());
         let record = TaskRecord {
+            execution_constraints: self
+                .execution_constraints_for_source_run(&params.provenance.source_run_id)?,
             task_id: task_id.clone(),
             run_id: run_id.clone(),
             goal: params.goal,
@@ -4244,6 +4263,13 @@ impl TaskStore {
         &self,
         params: ProductLoopStopRecoveryTaskStartParams,
     ) -> Result<ProductLoopStopRecoveryTaskStartResult> {
+        if self
+            .list_tasks()?
+            .iter()
+            .any(|record| record.execution_constraints.is_some())
+        {
+            bail!("aggregate recovery requires an explicit constrained source run");
+        }
         let _lock = self.acquire_product_loop_stop_recovery_admission_lock(
             &params.provenance.source_session_id,
             &params.provenance.source_drive_id,
@@ -4267,6 +4293,7 @@ impl TaskStore {
         let task_id = format!("task_{}", Uuid::new_v4());
         let run_id = format!("run_{}", Uuid::new_v4());
         let record = TaskRecord {
+            execution_constraints: None,
             task_id: task_id.clone(),
             run_id: run_id.clone(),
             goal: params.goal,
@@ -4570,6 +4597,7 @@ impl TaskStore {
     pub fn get_task(&self, task_id: &str) -> Result<Option<TaskRecord>> {
         for record in self.list_tasks()? {
             if record.task_id == task_id {
+                self.validate_execution_constraint_binding(&record)?;
                 return Ok(Some(record));
             }
         }
@@ -4579,6 +4607,7 @@ impl TaskStore {
     pub fn get_task_by_run_id(&self, run_id: &str) -> Result<Option<TaskRecord>> {
         for record in self.list_tasks()? {
             if record.run_id == run_id {
+                self.validate_execution_constraint_binding(&record)?;
                 return Ok(Some(record));
             }
         }
@@ -4595,6 +4624,7 @@ impl TaskStore {
                 && record.source_handoff_envelope_fingerprint.as_deref()
                     == Some(source_handoff_envelope_fingerprint)
             {
+                self.validate_execution_constraint_binding(&record)?;
                 return Ok(Some(record));
             }
         }
@@ -4613,6 +4643,7 @@ impl TaskStore {
                 && record.source_handoff_envelope_fingerprint.as_deref()
                     == Some(source_handoff_envelope_fingerprint)
             {
+                self.validate_execution_constraint_binding(&record)?;
                 return Ok(Some(record));
             }
         }
@@ -4630,6 +4661,7 @@ impl TaskStore {
                 .map(|provenance| provenance.failure_fingerprint.as_str())
                 == Some(failure_fingerprint)
             {
+                self.validate_execution_constraint_binding(&record)?;
                 return Ok(Some(record));
             }
         }
@@ -4647,6 +4679,7 @@ impl TaskStore {
                 .map(|provenance| provenance.failure_fingerprint.as_str())
                 == Some(failure_fingerprint)
             {
+                self.validate_execution_constraint_binding(&record)?;
                 return Ok(Some(record));
             }
         }
@@ -4665,6 +4698,7 @@ impl TaskStore {
                 == Some(failure_fingerprint)
                 && !self.is_terminal_failed_verification_recovery_repair_gate(&record)?
             {
+                self.validate_execution_constraint_binding(&record)?;
                 return Ok(Some(record));
             }
         }
@@ -4720,6 +4754,7 @@ impl TaskStore {
                 })
                 .unwrap_or(false)
             {
+                self.validate_execution_constraint_binding(&record)?;
                 return Ok(Some(record));
             }
         }
@@ -4743,6 +4778,7 @@ impl TaskStore {
                 })
                 .unwrap_or(false)
             {
+                self.validate_execution_constraint_binding(&record)?;
                 return Ok(Some(record));
             }
         }
@@ -4766,6 +4802,7 @@ impl TaskStore {
                 })
                 .unwrap_or(false)
             {
+                self.validate_execution_constraint_binding(&record)?;
                 return Ok(Some(record));
             }
         }
@@ -4783,6 +4820,7 @@ impl TaskStore {
                 .map(|provenance| provenance.recovery_boundary_fingerprint.as_str())
                 == Some(recovery_boundary_fingerprint)
             {
+                self.validate_execution_constraint_binding(&record)?;
                 return Ok(Some(record));
             }
         }
@@ -4815,10 +4853,11 @@ impl TaskStore {
             }
             let content = fs::read_to_string(&state_path)
                 .with_context(|| format!("failed to read {}", state_path.display()))?;
-            tasks.push(
-                serde_json::from_str(&content)
-                    .with_context(|| format!("failed to parse {}", state_path.display()))?,
-            );
+            let record: TaskRecord = serde_json::from_str(&content)
+                .with_context(|| format!("failed to parse {}", state_path.display()))?;
+            // Enumeration is metadata-only: a historical scratch ledger may be unreadable.
+            // Callers that select a task must use the validated task/run lookup.
+            tasks.push(record);
         }
         tasks.sort_by(|a: &TaskRecord, b: &TaskRecord| {
             a.created_at
@@ -4832,7 +4871,55 @@ impl TaskStore {
         self.runs_dir().join(run_id)
     }
 
+    fn execution_constraints_for_source_run(
+        &self,
+        run_id: &str,
+    ) -> Result<Option<brownie_protocol::TaskExecutionConstraints>> {
+        let source = self
+            .read_task_state_by_run_id_raw(run_id)?
+            .context("recovery execution constraints require an existing source run")?;
+        Ok(source.execution_constraints)
+    }
+
+    fn validate_execution_constraint_binding(&self, record: &TaskRecord) -> Result<()> {
+        if let Some(constraints) = &record.execution_constraints {
+            constraints.validate().map_err(anyhow::Error::msg)?;
+        }
+        let events = RunLedger::new(self.run_dir(&record.run_id)).read_events()?;
+        let mut starts = events
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::TaskStarted);
+        let bound = starts
+            .next()
+            .and_then(|event| event.payload.as_ref())
+            .and_then(|payload| payload.get("execution_constraints"));
+        let expected = record
+            .execution_constraints
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()?;
+        if bound != expected.as_ref() {
+            bail!("task execution constraints differ from durable admission");
+        }
+        if starts.any(|event| {
+            event
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.get("execution_constraints"))
+                != bound
+        }) {
+            bail!("task has conflicting execution constraint admissions");
+        }
+        Ok(())
+    }
+
     fn write_task_state(&self, record: &TaskRecord) -> Result<()> {
+        if let Some(constraints) = &record.execution_constraints {
+            constraints.validate().map_err(anyhow::Error::msg)?;
+        }
+        if self.run_dir(&record.run_id).join("state.json").exists() {
+            self.validate_execution_constraint_binding(record)?;
+        }
         self.ensure_durable_schema()?;
         let run_dir = self.run_dir(&record.run_id);
         fs::create_dir_all(&run_dir)
@@ -4851,9 +4938,12 @@ impl TaskStore {
     fn read_task_state_by_run_id_raw(&self, run_id: &str) -> Result<Option<TaskRecord>> {
         let state_path = self.run_dir(run_id).join("state.json");
         match fs::read_to_string(&state_path) {
-            Ok(content) => serde_json::from_str(&content)
-                .with_context(|| format!("failed to parse {}", state_path.display()))
-                .map(Some),
+            Ok(content) => {
+                let record: TaskRecord = serde_json::from_str(&content)
+                    .with_context(|| format!("failed to parse {}", state_path.display()))?;
+                self.validate_execution_constraint_binding(&record)?;
+                Ok(Some(record))
+            }
             Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
             Err(error) => {
                 Err(error).with_context(|| format!("failed to read {}", state_path.display()))
@@ -5405,6 +5495,30 @@ impl TaskStore {
         kind: LedgerEventKind,
         payload: Option<serde_json::Value>,
     ) -> Result<LedgerEvent> {
+        let mut payload = payload;
+        if kind == LedgerEventKind::TaskStarted {
+            if let Some(constraints) = &record.execution_constraints {
+                constraints.validate().map_err(anyhow::Error::msg)?;
+                let object = payload
+                    .get_or_insert_with(|| serde_json::json!({}))
+                    .as_object_mut()
+                    .context("task start payload must be an object")?;
+                let bound = serde_json::to_value(constraints)?;
+                if object
+                    .get("execution_constraints")
+                    .is_some_and(|value| value != &bound)
+                {
+                    bail!("task start execution constraints conflict with state");
+                }
+                object.insert("execution_constraints".into(), bound);
+            } else if payload
+                .as_ref()
+                .and_then(|value| value.get("execution_constraints"))
+                .is_some()
+            {
+                bail!("task start execution constraints missing from state");
+            }
+        }
         let payload_envelope = ledger_payload_envelope(&kind, payload.as_ref())?;
         Ok(LedgerEvent {
             event_id: format!("event_{}", Uuid::new_v4()),
@@ -9232,6 +9346,12 @@ fn validate_task_started_payload_schema(
     payload: &serde_json::Value,
 ) -> Result<()> {
     let object = validate_known_payload_object(kind, payload, TASK_STARTED_KNOWN_PAYLOAD_FIELDS)?;
+    if let Some(value) = object.get("execution_constraints") {
+        let constraints: brownie_protocol::TaskExecutionConstraints =
+            serde_json::from_value(value.clone())
+                .context("invalid task start execution constraints")?;
+        constraints.validate().map_err(anyhow::Error::msg)?;
+    }
     validate_payload_has_known_field(kind, object)?;
     validate_optional_payload_string_field(object, "status")?;
     validate_optional_payload_string_or_null_field(object, "parent_task_id")?;
@@ -9558,6 +9678,7 @@ const LLM_RESPONSE_RECEIVED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
 ];
 
 const TASK_STARTED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "execution_constraints",
     "apply_fingerprint",
     "apply_id",
     "decision_fingerprint",
@@ -12253,6 +12374,7 @@ mod tests {
 
         let error = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "must not mutate".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -12307,6 +12429,7 @@ mod tests {
 
         let error = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "must not mutate".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -12467,6 +12590,7 @@ mod tests {
 
         let error = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "disk full failpoint".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -12499,6 +12623,7 @@ mod tests {
 
         let error = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "rename denied failpoint".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -12524,6 +12649,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "preserve old state".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -12797,6 +12923,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "typed payload schema".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -12826,6 +12953,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "task completed payload validation".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -12916,6 +13044,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "permission payload validation".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -13016,6 +13145,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "tool payload validation".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -13353,6 +13483,7 @@ mod tests {
         let record = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "codebase payload validation".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -13477,6 +13608,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "workspace patch payload schema".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -13716,6 +13848,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "headless payload schema".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -14188,6 +14321,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "late terminal race".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -14246,6 +14380,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "duplicate terminal completion".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -14304,6 +14439,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "lifecycle payload schema".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -14511,6 +14647,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "task admission payload schema".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -14640,6 +14777,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "tool planning payload schema".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -14734,6 +14872,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "subtask dispatch payload schema".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -15139,6 +15278,7 @@ mod tests {
         let store = std::sync::Arc::new(TaskStore::new(temp.path()));
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "concurrent terminal race".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -15280,6 +15420,7 @@ mod tests {
         let store = TaskStore::new(Path::new(&root));
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "terminal process loss".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -15423,6 +15564,7 @@ mod tests {
         let store = TaskStore::new(root);
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "preserve durable v1 fixture".into(),
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
@@ -15911,6 +16053,7 @@ mod tests {
 
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "test goal".into(),
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
@@ -15941,6 +16084,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "run me".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -15982,6 +16126,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "read ledger".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -16077,6 +16222,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "list me".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -16100,6 +16246,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let parent = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "parent".into(),
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,

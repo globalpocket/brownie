@@ -5,7 +5,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+mod execution_constraints;
 pub mod semantic_contract;
+pub use execution_constraints::TaskExecutionConstraints;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct JsonRpcRequest {
@@ -832,6 +834,8 @@ pub enum ToolExecuteStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct TaskStartParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_constraints: Option<TaskExecutionConstraints>,
     pub goal: String,
     pub mode_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1656,6 +1660,8 @@ pub struct HeadlessRunJourneyExecution {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct HeadlessRunJourneyTaskStartEnvelope {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_constraints: Option<TaskExecutionConstraints>,
     pub goal: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode_id: Option<String>,
@@ -5563,6 +5569,8 @@ pub struct LedgerEventSummary {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TaskRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_constraints: Option<TaskExecutionConstraints>,
     pub task_id: String,
     pub run_id: String,
     pub goal: String,
@@ -5864,6 +5872,7 @@ mod semantic_contract_tests {
             .expect("golden fixtures object");
 
         let task_start = TaskStartParams {
+            execution_constraints: None,
             goal: "ship bounded release evidence".to_string(),
             mode_id: Some("orchestrator".to_string()),
             verification_recovery_source: None,

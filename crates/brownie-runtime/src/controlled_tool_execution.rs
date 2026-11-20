@@ -179,6 +179,31 @@ pub(super) fn handle_tool_execute(id: Value, params: Option<Value>) -> JsonRpcRe
         );
     }
 
+    if matches!(
+        definition.tool_id.as_str(),
+        WORKSPACE_READ_TOOL_ID | WORKSPACE_WRITE_TOOL_ID
+    ) {
+        if let Some(task_id) = params.task_id.as_deref() {
+            match store.tasks().get_task(task_id) {
+                Ok(Some(record)) if record.execution_constraints.is_some() => {
+                    return result_response(
+                        id,
+                        json!(ToolExecuteResult {
+                            tool_id: definition.tool_id,
+                            status: ToolExecuteStatus::Denied,
+                            output: json!({"reason": "Constrained workspace tools require task.run durable admission and budget accounting."}),
+                        }),
+                    );
+                }
+                Ok(Some(_)) => {}
+                Ok(None) => return error_response(id, -32602, "invalid params: task not found"),
+                Err(error) => {
+                    return error_response(id, -32603, &format!("internal error: {error}"))
+                }
+            }
+        }
+    }
+
     if definition.tool_id == CODEBASE_INDEX_SELECTION_READ_TOOL_ID {
         return match execute_codebase_index_selection_read(
             &store,
@@ -1633,12 +1658,21 @@ fn allowed_planned_tool_ids(
         goal: record.goal.clone(),
         mode_id: policy.mode_id.clone(),
     });
-    ToolPlanEvaluator::evaluate(policy, plan)
+    let mut allowed: BTreeSet<String> = ToolPlanEvaluator::evaluate(policy, plan)
         .items
         .into_iter()
         .filter(|decision| decision.allowed)
         .map(|decision| decision.tool_id)
-        .collect()
+        .collect();
+    if record
+        .execution_constraints
+        .as_ref()
+        .is_some_and(|constraints| constraints.requires_workspace_write_proposal)
+        && RuntimePermissionGate::check(policy, RuntimeAction::WriteWorkspace).allowed
+    {
+        allowed.insert(WORKSPACE_WRITE_TOOL_ID.into());
+    }
+    allowed
 }
 
 fn builtin_tool_missing_from_runtime_plan(
@@ -2821,12 +2855,6 @@ pub(super) fn handle_approved_workspace_intents(
     Ok(())
 }
 
-#[derive(Debug, Clone)]
-struct TodoBlock {
-    id: Option<String>,
-    title: String,
-}
-
 fn selected_todo_first_line_from_goal(goal: &str) -> Option<String> {
     let marker = "\n## Selected TODO\n";
     let marker_index = goal.find(marker)?;
@@ -2867,31 +2895,6 @@ fn next_unchecked_todo_line_start(todo: &str, offset: usize) -> Option<usize> {
     None
 }
 
-fn is_concrete_product_ready_leaf_todo(block: &TodoBlock) -> bool {
-    for prefix in ["E-14a-", "E-15a-", "E-16a-"] {
-        if block.title.starts_with(prefix) {
-            return true;
-        }
-    }
-    block.id.as_deref().is_some_and(|id| {
-        if id == "E-14a" {
-            return false;
-        }
-        if id.starts_with("E-14a-") || id.starts_with("E-15a-") || id.starts_with("E-16a-") {
-            return true;
-        }
-        if id.starts_with("E-")
-            && (id.contains("-next") || id.chars().last().is_some_and(|ch| ch.is_ascii_lowercase()))
-        {
-            return true;
-        }
-        matches!(
-            id,
-            "E-04a" | "E-04b" | "E-04c" | "E-07a" | "E-07b" | "E-07c" | "E-08a" | "E-08b"
-        )
-    })
-}
-
 fn is_todo_workspace_path(path: &str) -> bool {
     path == "todo.md" || path == ".brownie/todo.md"
 }
@@ -2900,6 +2903,21 @@ pub(super) fn todo_md_workspace_write_rejection_reason(
     record: &brownie_protocol::TaskRecord,
     input: &Value,
 ) -> Option<&'static str> {
+    if let Some(constraints) = &record.execution_constraints {
+        let path = input
+            .get("path")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let operation = input
+            .get("operation")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if !constraints.allows_write(path, operation) {
+            return Some(
+                "task_execution_constraint_denied: workspace write exceeds admitted restrictions",
+            );
+        }
+    }
     let path = input.get("path").and_then(Value::as_str)?;
     if selected_todo_forbids_workspace_write_path(&record.goal, path) {
         return Some(
@@ -2953,19 +2971,7 @@ pub(super) fn todo_md_workspace_write_rejection_reason(
             "Selected implementation TODO names a concrete non-todo workspace target; do not rewrite the live TODO queue as implementation progress. Edit the named file or fail closed.",
         );
     }
-    let first_line = selected_todo_first_line_from_goal(&record.goal)?;
-    let title = first_line
-        .strip_prefix("- [ ] ")
-        .or_else(|| first_line.strip_prefix("* [ ] "))?
-        .trim();
-    let id = title.split_once(':')?.0.trim();
-    let block = TodoBlock {
-        id: Some(id.to_string()),
-        title: title.to_string(),
-    };
-    is_concrete_product_ready_leaf_todo(&block).then_some(
-        "Leaf Product Ready TODOs must not rewrite the live TODO queue; edit the named implementation files or fail closed.",
-    )
+    None
 }
 
 pub(super) fn normalize_todo_md_workspace_write_input(
@@ -3107,7 +3113,40 @@ fn workspace_read_intent_runtime_rejection_reason(
     record: &brownie_protocol::TaskRecord,
     input: &Value,
 ) -> anyhow::Result<Option<String>> {
-    if !task_goal_requires_workspace_write_proposal(&record.goal) {
+    if let Some(constraints) = &record.execution_constraints {
+        let path = input
+            .get("path")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if !constraints.allows_read(path) {
+            return Ok(Some(
+                "task_execution_constraint_denied: workspace read exceeds admitted restrictions"
+                    .into(),
+            ));
+        }
+        if constraints.max_workspace_reads.is_some() {
+            let completed = store
+                .tasks()
+                .read_ledger_events(&record.run_id)?
+                .iter()
+                .filter(|event| {
+                    event.kind == LedgerEventKind::ToolExecutionCompleted
+                        && event
+                            .payload
+                            .as_ref()
+                            .and_then(|payload| payload.get("tool_id"))
+                            .and_then(Value::as_str)
+                            == Some(WORKSPACE_READ_TOOL_ID)
+                })
+                .count() as u64;
+            if constraints.read_budget_exhausted(completed) {
+                return Ok(Some(
+                    "task_execution_constraint_denied: workspace read budget exhausted".into(),
+                ));
+            }
+        }
+    }
+    if !task_requires_workspace_write_proposal(record) {
         return Ok(None);
     }
     let workspace_read_path = input.get("path").and_then(Value::as_str);
@@ -6377,6 +6416,7 @@ mod mcp_approval_lock_tests {
 
     fn test_task_record() -> TaskRecord {
         TaskRecord {
+            execution_constraints: None,
             task_id: "task_lock_regression".to_string(),
             run_id: "run_lock_regression".to_string(),
             goal: "prove mcp approval lock ownership".to_string(),
@@ -6438,6 +6478,86 @@ mod mcp_approval_lock_tests {
             mcp_access: Vec::new(),
             completion_rules: Vec::new(),
         }
+    }
+
+    #[test]
+    fn execution_constraints_deny_tool_reads_and_writes_in_independent_project() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = BrownieStore::new(temp.path());
+        std::fs::write(temp.path().join("outside.txt"), "unchanged").unwrap();
+        let mut record = test_task_record();
+        record.goal = "Update inside.txt using the admitted context.".into();
+        record.execution_constraints = Some(brownie_protocol::TaskExecutionConstraints {
+            read_paths: Some(vec!["inside.txt".into()]),
+            write_paths: Some(vec!["inside.txt".into()]),
+            write_operations: Some(vec!["patch_file".into()]),
+            ..Default::default()
+        });
+        for (tool, input) in [
+            (WORKSPACE_READ_TOOL_ID, json!({"path": "outside.txt"})),
+            (
+                WORKSPACE_WRITE_TOOL_ID,
+                json!({"path": "outside.txt", "operation": "replace_file", "content": "changed"}),
+            ),
+        ] {
+            let intent = json!({"tool_requests": [{"tool_id": tool, "reason": "Requested operation", "input": input}]});
+            let assistant = format!("```brownie-tool-intent\n{intent}\n```");
+            append_tool_intent_events(&store, &record, &write_policy(), &assistant).unwrap();
+            handle_approved_workspace_intents(&store, &record, &write_policy(), &assistant)
+                .unwrap();
+        }
+        let events = store.tasks().read_ledger_events(&record.run_id).unwrap();
+        assert!(events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::ToolIntentDenied));
+        assert!(!events.iter().any(|event| matches!(
+            event.kind,
+            LedgerEventKind::ToolExecutionCompleted | LedgerEventKind::WorkspacePatchProposed
+        )));
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("outside.txt")).unwrap(),
+            "unchanged"
+        );
+    }
+
+    #[test]
+    fn execution_constraints_read_budget_does_not_reset_after_proposal() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = BrownieStore::new(temp.path());
+        let mut record = test_task_record();
+        record.goal = "Create new.txt using the admitted input.".into();
+        record.execution_constraints = Some(brownie_protocol::TaskExecutionConstraints {
+            max_workspace_reads: Some(1),
+            ..Default::default()
+        });
+        assert!(workspace_read_intent_runtime_rejection_reason(
+            &store,
+            &record,
+            &json!({"path": "notes.txt"})
+        )
+        .unwrap()
+        .is_none());
+        store.tasks().append_task_event_with_payload(&record, LedgerEventKind::ToolExecutionCompleted,
+            Some(json!({"tool_id": WORKSPACE_READ_TOOL_ID, "path": "notes.txt", "status": "Completed"}))).unwrap();
+        // A proposal must not replenish the durable read budget.
+        let intent = json!({"tool_requests": [{"tool_id": WORKSPACE_WRITE_TOOL_ID, "reason": "create result", "input": {"path": "new.txt", "operation": "create_file", "content": "new"}}]});
+        let assistant = format!("```brownie-tool-intent\n{intent}\n```");
+        append_tool_intent_events(&store, &record, &write_policy(), &assistant).unwrap();
+        handle_approved_workspace_intents(&store, &record, &write_policy(), &assistant).unwrap();
+        assert!(store
+            .tasks()
+            .read_ledger_events(&record.run_id)
+            .unwrap()
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::WorkspacePatchProposed));
+        assert!(workspace_read_intent_runtime_rejection_reason(
+            &store,
+            &record,
+            &json!({"path": "other.txt"})
+        )
+        .unwrap()
+        .unwrap()
+        .contains("budget exhausted"));
     }
 
     #[test]
@@ -6570,16 +6690,18 @@ mod mcp_approval_lock_tests {
             "E-09a",
             "E-09-next",
             "E-14a-runtime-evidence-section",
+            "independent-task",
         ] {
-            let block = TodoBlock {
-                id: Some(id.to_string()),
-                title: format!("{id}: Concrete Product Ready leaf"),
-            };
-
-            assert!(
-                is_concrete_product_ready_leaf_todo(&block),
-                "{id} must fail closed instead of being rewritten into duplicate TODOs"
-            );
+            assert_denied_read_preserves_project_queue(&format!("{id}: Concrete assigned work"));
+            let mut record = test_task_record();
+            record.goal = format!("{id}: Concrete assigned work");
+            record.execution_constraints = Some(brownie_protocol::TaskExecutionConstraints {
+                denied_write_paths: vec!["planning/tasks.md".into()],
+                ..Default::default()
+            });
+            assert!(todo_md_workspace_write_rejection_reason(&record, &json!({
+                "path": "planning/tasks.md", "operation": "patch_file", "old_text": "old", "new_text": "new"
+            })).unwrap().contains("task_execution_constraint_denied"));
         }
     }
 
@@ -7036,6 +7158,10 @@ mod mcp_approval_lock_tests {
     #[test]
     fn concrete_product_ready_leaf_todos_cannot_patch_todo_md() {
         let mut record = test_task_record();
+        record.execution_constraints = Some(brownie_protocol::TaskExecutionConstraints {
+            write_paths: Some(vec!["checks.txt".into()]),
+            ..Default::default()
+        });
         record.goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-07a: Add supply-chain command availability guard:\n  Ensure missing tooling is blocked.\n".to_string();
 
         let reason = todo_md_workspace_write_rejection_reason(
@@ -7048,12 +7174,16 @@ mod mcp_approval_lock_tests {
             }),
         );
 
-        assert!(reason.is_some());
+        assert!(reason.unwrap().contains("task_execution_constraint_denied"));
     }
 
     #[test]
     fn generated_product_ready_leaf_todos_cannot_patch_todo_md() {
         let mut record = test_task_record();
+        record.execution_constraints = Some(brownie_protocol::TaskExecutionConstraints {
+            write_paths: Some(vec!["checks.txt".into()]),
+            ..Default::default()
+        });
         record.goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-09a: Implement the next concrete step for E-09:\n  Source TODO: E-09.\n".to_string();
 
         let reason = todo_md_workspace_write_rejection_reason(
@@ -7066,7 +7196,7 @@ mod mcp_approval_lock_tests {
             }),
         );
 
-        assert!(reason.is_some());
+        assert!(reason.unwrap().contains("task_execution_constraint_denied"));
     }
 
     #[test]

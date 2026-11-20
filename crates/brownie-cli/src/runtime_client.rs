@@ -224,7 +224,10 @@ impl RuntimeClient {
                 None
             };
         match command {
-            CliCommand::Run { objective } => self.runtime_run(objective, json),
+            CliCommand::Run {
+                objective,
+                execution_constraints,
+            } => self.runtime_run(objective, execution_constraints.as_ref(), json),
             CliCommand::Resume { scope } => self.runtime_resume(scope.as_ref(), json),
             CliCommand::Status => self.runtime_status(json),
             CliCommand::Inspect {
@@ -261,9 +264,10 @@ impl RuntimeClient {
     fn runtime_run(
         &self,
         objective: &str,
+        constraints: Option<&brownie_protocol::TaskExecutionConstraints>,
         json_output: bool,
     ) -> Result<String, RuntimeClientError> {
-        let params = cli_run_drive_params(objective)?;
+        let params = cli_run_drive_params(objective, constraints)?;
         let recovery_identity = run_recovery_identity_from_params(&params)?;
         let result = self
             .call_runtime_value(
@@ -3352,10 +3356,21 @@ fn cli_resume_params(
     }))
 }
 
-fn cli_run_drive_params(objective: &str) -> Result<Value, RuntimeClientError> {
+fn cli_run_drive_params(
+    objective: &str,
+    constraints: Option<&brownie_protocol::TaskExecutionConstraints>,
+) -> Result<Value, RuntimeClientError> {
     let objective = objective.trim();
     validate_cli_objective(objective)?;
-    cli_run_drive_params_with_mode(objective, configured_cli_run_mode_id()?)
+    let mut params = cli_run_drive_params_with_mode(objective, configured_cli_run_mode_id()?)?;
+    if let Some(constraints) = constraints {
+        constraints
+            .validate()
+            .map_err(|_| RuntimeClientError::InvalidResponse)?;
+        params["journey_admission"]["task_start"]["execution_constraints"] =
+            serde_json::to_value(constraints).map_err(|_| RuntimeClientError::InvalidResponse)?;
+    }
+    Ok(params)
 }
 
 fn cli_run_drive_params_with_mode(
@@ -5702,6 +5717,22 @@ fn render_truncation(output: &mut String, label: &str, len: usize, limit: usize)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn execution_constraints_are_bound_to_task_start_not_goal_text() {
+        let constraints = brownie_protocol::TaskExecutionConstraints {
+            write_paths: Some(vec!["notes.txt".into()]),
+            max_workspace_reads: Some(0),
+            requires_workspace_write_proposal: true,
+            ..Default::default()
+        };
+        let params = cli_run_drive_params("Result", Some(&constraints)).unwrap();
+        assert_eq!(params["journey_admission"]["task_start"]["goal"], "Result");
+        assert_eq!(
+            params["journey_admission"]["task_start"]["execution_constraints"],
+            serde_json::to_value(constraints).unwrap()
+        );
+    }
 
     #[test]
     fn objective_scope_recognizes_direct_target_only_clause() {
