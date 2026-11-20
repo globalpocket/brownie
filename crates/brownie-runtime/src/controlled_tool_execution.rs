@@ -2547,6 +2547,14 @@ pub(super) fn append_tool_intent_events(
             "request_reason": metadata_privacy::redact_text(&decision.request_reason),
             "input_summary": summarize_intent_input(&decision.input),
         });
+        if workspace_read_rejection_reason.is_some() {
+            payload["progress_outcome"] = json!({
+                "status": "replan_required",
+                "reason_code": "workspace_read_not_admitted",
+                "next_action": "revise_inputs_or_objective",
+                "workspace_mutation_proposed": false,
+            });
+        }
         if runtime_plan_rejection_reason.is_some() {
             payload["planned_allowed_tool_ids"] = json!(planned_allowed_tool_ids
                 .iter()
@@ -2599,8 +2607,6 @@ pub(super) fn handle_approved_workspace_intents(
             }
             None => false,
         };
-    let mut duplicate_workspace_read_denied = false;
-    let mut workspace_read_failed = false;
     for (intent_index, mut decision) in evaluation.items.into_iter().enumerate() {
         if decision.tool_id == WORKSPACE_WRITE_TOOL_ID {
             decision.input = normalize_todo_md_workspace_write_input(record, &decision.input);
@@ -2726,7 +2732,6 @@ pub(super) fn handle_approved_workspace_intents(
                         "reason": "Repair feedback already embeds previous workspace.read output_preview; workspace.read is not progress. Request workspace.write or record a concrete blocker TODO.",
                     })),
                 )?;
-                duplicate_workspace_read_denied = true;
                 continue;
             }
             if let Some(reason) =
@@ -2741,7 +2746,6 @@ pub(super) fn handle_approved_workspace_intents(
                         "reason": reason,
                     })),
                 )?;
-                duplicate_workspace_read_denied = true;
                 continue;
             }
         }
@@ -2760,10 +2764,9 @@ pub(super) fn handle_approved_workspace_intents(
                 Some(json!({
                     "tool_id": decision.tool_id,
                     "status": "Denied",
-                    "reason": "Additional workspace.read is not progress after the phase-loop read budget is exhausted; use the existing Tool Execution output_preview/content_sha256 and request workspace.write or record a concrete blocker.",
+                    "reason": "Additional workspace.read is not progress under the current read budget; use the verified context or revise the inputs or objective.",
                 })),
             )?;
-            duplicate_workspace_read_denied = true;
             continue;
         }
         let execution_input = if decision.tool_id == GIT_COMMIT_TOOL_ID {
@@ -2804,10 +2807,6 @@ pub(super) fn handle_approved_workspace_intents(
                 input: execution_input,
             },
         )?;
-        if result.tool_id == WORKSPACE_READ_TOOL_ID && result.status == ToolExecutionStatus::Failed
-        {
-            workspace_read_failed = true;
-        }
         let kind = match result.status {
             ToolExecutionStatus::Completed => LedgerEventKind::ToolExecutionCompleted,
             ToolExecutionStatus::Denied => LedgerEventKind::ToolExecutionDenied,
@@ -2819,13 +2818,6 @@ pub(super) fn handle_approved_workspace_intents(
             Some(tool_execution_ledger_payload(&result)),
         )?;
     }
-    append_todo_decomposition_blocker_after_read_only_stall(
-        store,
-        record,
-        policy,
-        duplicate_workspace_read_denied,
-        workspace_read_failed,
-    )?;
     Ok(())
 }
 
@@ -3560,7 +3552,7 @@ fn workspace_read_intent_runtime_rejection_reason(
             )));
         }
         return Ok(Some(
-            "Additional workspace.read is not progress after the phase-loop read budget is exhausted; use the existing Tool Execution output_preview/content_sha256 and request workspace.write or record a concrete blocker."
+            "Additional workspace.read is not progress under the current read budget; use the verified context or revise the inputs or objective."
                 .to_string(),
         ));
     }
@@ -6976,6 +6968,40 @@ mod mcp_approval_lock_tests {
             allowed_handoff_targets: None,
             mcp_access: Vec::new(),
             completion_rules: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn denied_read_returns_generic_replan_without_synthesizing_project_changes() {
+        for (path, goal) in [
+            ("notes.txt", "Update notes.txt with the requested correction."),
+            (".brownie/todo.md", "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-14a: Write the final Product Ready judgment input memo:\n  File: `docs/architecture/final-product-ready-judgment.md`.\n"),
+        ] {
+            let temp = tempfile::tempdir().expect("fixture project");
+            let store = BrownieStore::new(temp.path());
+            let file = temp.path().join(path);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            let original = if path == "notes.txt" { "Independent project notes.\n" } else { "- [ ] E-14a: Write the final Product Ready judgment input memo:\n" };
+            std::fs::write(&file, original).unwrap();
+            let mut record = test_task_record();
+            record.goal = goal.to_string();
+            store.tasks().append_task_event_with_payload(
+                &record, LedgerEventKind::ToolExecutionCompleted,
+                Some(json!({"tool_id": WORKSPACE_READ_TOOL_ID, "path": path, "status": "Completed"})),
+            ).unwrap();
+            let intent = json!({"tool_requests": [{"tool_id": WORKSPACE_READ_TOOL_ID,
+                "reason": "Read the same context again", "input": {"path": path}}]});
+            let assistant = format!("```brownie-tool-intent\n{intent}\n```");
+            append_tool_intent_events(&store, &record, &write_policy(), &assistant).unwrap();
+            handle_approved_workspace_intents(&store, &record, &write_policy(), &assistant).unwrap();
+            let events = store.tasks().read_ledger_events(&record.run_id).unwrap();
+            let denied = events.iter().find(|event| event.kind == LedgerEventKind::ToolIntentDenied)
+                .expect("repeated read denied");
+            let payload = denied.payload.as_ref().unwrap();
+            assert_eq!(payload["progress_outcome"]["status"], "replan_required");
+            assert_eq!(payload["progress_outcome"]["workspace_mutation_proposed"], false);
+            assert!(!events.iter().any(|event| event.kind == LedgerEventKind::WorkspacePatchProposed));
+            assert_eq!(std::fs::read_to_string(file).unwrap(), original);
         }
     }
 

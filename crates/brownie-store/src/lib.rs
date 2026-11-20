@@ -8290,6 +8290,24 @@ fn validate_tool_intent_payload_schema(
     payload: &serde_json::Value,
 ) -> Result<()> {
     let object = validate_known_payload_object(kind, payload, TOOL_INTENT_KNOWN_PAYLOAD_FIELDS)?;
+    if let Some(outcome) = object.get("progress_outcome") {
+        let expected = serde_json::json!({
+            "status": "replan_required",
+            "reason_code": "workspace_read_not_admitted",
+            "next_action": "revise_inputs_or_objective",
+            "workspace_mutation_proposed": false,
+        });
+        if !matches!(
+            kind,
+            LedgerEventKind::ToolIntentPermissionChecked | LedgerEventKind::ToolIntentDenied
+        ) || object.get("allowed") != Some(&serde_json::Value::Bool(false))
+            || object.get("tool_id").and_then(serde_json::Value::as_str) != Some("workspace.read")
+            || outcome != &expected
+        {
+            bail!("{kind:?} invalid bounded denied-read progress_outcome");
+        }
+    }
+
     for field in [
         "tool_id",
         "required_action",
@@ -10526,6 +10544,7 @@ const PARENT_JOIN_CONTINUATION_CONSUMED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
 ];
 
 const TOOL_INTENT_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "progress_outcome",
     "allowed",
     "input_summary",
     "mode_id",
@@ -16215,5 +16234,75 @@ mod tests {
         assert!(payload["source_intent_summary"].get("input").is_none());
         assert_eq!(payload["execution_enabled"], false);
         assert_eq!(payload["scheduler_handoff_enabled"], false);
+    }
+}
+
+#[cfg(test)]
+mod generic_read_progress_schema_tests {
+    use super::*;
+
+    fn payload() -> serde_json::Value {
+        serde_json::json!({
+            "tool_id": "workspace.read", "required_action": "ReadWorkspace", "allowed": false,
+            "reason": "Repeated context read", "request_reason": "Need context", "input_summary": {},
+            "progress_outcome": {"status": "replan_required", "reason_code": "workspace_read_not_admitted",
+                "next_action": "revise_inputs_or_objective", "workspace_mutation_proposed": false}
+        })
+    }
+
+    #[test]
+    fn accepts_bounded_denied_read_progress_only() {
+        for kind in [
+            LedgerEventKind::ToolIntentPermissionChecked,
+            LedgerEventKind::ToolIntentDenied,
+        ] {
+            validate_tool_intent_payload_schema(&kind, &payload()).unwrap();
+        }
+    }
+
+    #[test]
+    fn rejects_approved_or_other_tool_progress_claims() {
+        assert!(validate_tool_intent_payload_schema(
+            &LedgerEventKind::ToolIntentApproved,
+            &payload()
+        )
+        .is_err());
+        for (key, value) in [
+            ("allowed", serde_json::json!(true)),
+            ("tool_id", serde_json::json!("workspace.write")),
+        ] {
+            let mut p = payload();
+            p[key] = value;
+            assert!(
+                validate_tool_intent_payload_schema(&LedgerEventKind::ToolIntentDenied, &p)
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_nested_fields_and_false_progress() {
+        for (key, value) in [
+            ("raw_context", serde_json::json!("secret")),
+            ("workspace_mutation_proposed", serde_json::json!(true)),
+            ("status", serde_json::json!("completed")),
+            ("next_action", serde_json::json!("apply_without_approval")),
+        ] {
+            let mut p = payload();
+            p["progress_outcome"][key] = value;
+            assert!(
+                validate_tool_intent_payload_schema(&LedgerEventKind::ToolIntentDenied, &p)
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn preserves_unknown_root_field_rejection() {
+        let mut p = payload();
+        p["unrecognized"] = serde_json::json!(true);
+        assert!(
+            validate_tool_intent_payload_schema(&LedgerEventKind::ToolIntentDenied, &p).is_err()
+        );
     }
 }

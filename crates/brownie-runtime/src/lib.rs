@@ -2794,21 +2794,6 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                 && task_goal_enforces_workspace_read_budget_before_write(&running.goal)
                 && workspace_read_completed_count(&followup_events) >= 2
             {
-                if let Err(error) = append_todo_decomposition_blocker_after_read_only_stall(
-                    &store, &running, &policy, false, false,
-                ) {
-                    let _ = store.tasks().append_task_event_with_payload(
-                        &running,
-                        LedgerEventKind::ToolExecutionFailed,
-                        Some(json!({
-                            "tool_id": WORKSPACE_WRITE_TOOL_ID,
-                            "status": "Failed",
-                            "reason": format!(
-                                "failed to synthesize live TODO queue read-budget follow-up before another LLM request: {error}"
-                            ),
-                        })),
-                    );
-                }
                 break;
             }
             // A permitted read is context acquisition, not a failed attempt to
@@ -2982,35 +2967,6 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         }
     }
 
-    let pre_completion_events = match store.tasks().read_ledger_events(&running.run_id) {
-        Ok(events) => events,
-        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
-    };
-    if task_goal_requires_workspace_write_proposal(&running.goal)
-        && !pre_completion_events
-            .iter()
-            .any(|event| event.kind == LedgerEventKind::WorkspacePatchProposed)
-    {
-        if let Err(error) = append_todo_decomposition_blocker_after_read_only_stall(
-            &store,
-            &running,
-            &policy,
-            run_has_duplicate_workspace_read_denial(&pre_completion_events),
-            run_has_workspace_read_failure(&pre_completion_events),
-        ) {
-            let _ = store.tasks().append_task_event_with_payload(
-                &running,
-                LedgerEventKind::ToolExecutionFailed,
-                Some(json!({
-                    "tool_id": WORKSPACE_WRITE_TOOL_ID,
-                    "status": "Failed",
-                    "reason": format!(
-                        "failed to synthesize live TODO queue decomposition workspace.write proposal: {error}"
-                    ),
-                })),
-            );
-        }
-    }
     let completion_gate_events = match store.tasks().read_ledger_events(&running.run_id) {
         Ok(events) => events,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
@@ -3257,10 +3213,6 @@ fn task_goal_requires_tool_intent(goal: &str) -> bool {
     .any(|needle| goal.contains(needle))
 }
 
-fn run_has_duplicate_workspace_read_denial(events: &[LedgerEvent]) -> bool {
-    events.iter().any(is_duplicate_workspace_read_denial)
-}
-
 fn is_recoverable_workspace_read_denial_for_followup(event: &LedgerEvent) -> bool {
     matches!(
         event.kind,
@@ -3401,15 +3353,6 @@ fn workspace_write_parser_repair_stall_summary(events: &[LedgerEvent]) -> Option
             })
             .and_then(|payload| payload.get("reason").and_then(Value::as_str))
             .map(|reason| format!("workspace.write parser recovery stalled: {reason}"))
-    })
-}
-
-fn run_has_workspace_read_failure(events: &[LedgerEvent]) -> bool {
-    events.iter().any(|event| {
-        event.kind == LedgerEventKind::ToolExecutionFailed
-            && event.payload.as_ref().is_some_and(|payload| {
-                payload.get("tool_id").and_then(Value::as_str) == Some(WORKSPACE_READ_TOOL_ID)
-            })
     })
 }
 
@@ -13134,6 +13077,18 @@ fn sanitize_ledger_payload_with_options(
     let Value::Object(map) = payload? else {
         return None;
     };
+    // Only this closed, store-validated outcome is public. Do not expose arbitrary
+    // nested metadata from historical or imported ledgers.
+    let bounded_progress = json!({
+        "status": "replan_required",
+        "reason_code": "workspace_read_not_admitted",
+        "next_action": "revise_inputs_or_objective",
+        "workspace_mutation_proposed": false,
+    });
+    let expose_progress = map.get("tool_id").and_then(Value::as_str)
+        == Some(WORKSPACE_READ_TOOL_ID)
+        && map.get("allowed").and_then(Value::as_bool) == Some(false)
+        && map.get("progress_outcome") == Some(&bounded_progress);
     const ALLOWED_KEYS: &[&str] = &[
         "tool_id",
         "status",
@@ -13378,6 +13333,9 @@ fn sanitize_ledger_payload_with_options(
                 || (include_patch_material && key.as_str() == "patch_hunks")
         })
         .collect::<serde_json::Map<_, _>>();
+    if expose_progress {
+        sanitized.insert("progress_outcome".to_string(), bounded_progress);
+    }
     if sanitized.get("tool_id").and_then(Value::as_str) == Some(WORKSPACE_READ_TOOL_ID)
         && sanitized.contains_key("output_preview")
     {
@@ -64453,7 +64411,7 @@ content-length: {}
     }
 
     #[test]
-    fn openai_task_run_synthesizes_concrete_e04_decomposition_after_duplicate_read_denial() {
+    fn openai_task_run_stops_without_synthesizing_project_decomposition_after_duplicate_reads() {
         let _lock = super::tests::lock_env();
         let _guard = EnvGuard::clear();
         let temp = tempfile::tempdir().unwrap();
@@ -64463,10 +64421,13 @@ content-length: {}
             "- [ ] E-04: Expand CI to include `cargo fmt --all --check`,\n  `cargo check --workspace --all-targets --all-features`,\n  `cargo clippy --workspace --all-targets --all-features -- -D warnings`,\n  `cargo test --workspace --all-features`, frozen pnpm install, root\n  check/test/build, executable release gate, Product Completion Guard, and\n  process-loss E2E.\n",
         )
         .expect("todo");
-        let (base_url, handle) = spawn_mock_many(vec![
+        let mut responses = vec![
             r#"{"choices":[{"message":{"content":"Read the TODO before editing.\n\n```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Read .brownie/todo.md before proposing the blocker refinement.\",\"input\":{\"path\":\".brownie/todo.md\"}}]}\n```"}}]}"#,
             r#"{"choices":[{"message":{"content":"Try to read the same TODO again.\n\n```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Re-read .brownie/todo.md before editing.\",\"input\":{\"path\":\".brownie/todo.md\"}}]}\n```"}}]}"#,
-        ]);
+        ];
+        responses.extend(std::iter::repeat(responses[1]).take(5));
+        let (base_url, handle) = spawn_mock_many(responses);
+        let original_todo = std::fs::read(temp.path().join(".brownie/todo.md")).unwrap();
         write_mock_config(temp.path(), &base_url);
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
         std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
@@ -64486,15 +64447,20 @@ content-length: {}
             panic!("run error: {:?}", run.error);
         }
         let run_result = run.result.expect("run result");
-        if run_result["status"] != "Completed" {
+        if run_result["status"] != "Failed" {
             panic!("unexpected run result: {run_result:#}");
         }
-        if run_result["agent_loop"]["final_state"] != "Completed" {
+        if run_result["agent_loop"]["final_state"] != "Failed" {
             panic!("unexpected run result: {run_result:#}");
         }
 
         let observed = handle.join().unwrap();
-        assert_eq!(observed.len(), 2);
+        assert_eq!(observed.len(), 7);
+        assert!(run_result.get("llm_provider_failure").is_none());
+        assert!(run_result["agent_loop"]["completion_summary"]
+            .as_str()
+            .unwrap()
+            .contains("valid workspace.write proposal"));
         let second_prompt = observed[1]["messages"]
             .as_array()
             .expect("messages")
@@ -64510,35 +64476,31 @@ content-length: {}
         .result
         .unwrap();
         let event_list = events["events"].as_array().unwrap();
-        assert!(event_list.iter().any(|event| {
-            event["kind"] == "ToolExecutionDenied"
-                && event["payload"]["tool_id"] == WORKSPACE_READ_TOOL_ID
-                && event["payload"]["reason"]
-                    .as_str()
-                    .is_some_and(|reason| reason.contains("Additional workspace.read"))
-        }));
-        let proposal = event_list
+        let denied = event_list
             .iter()
-            .find(|event| event["kind"] == "WorkspacePatchProposed")
-            .expect("workspace write proposal");
-        assert_eq!(proposal["payload"]["path"], ".brownie/todo.md");
-        assert_eq!(proposal["payload"]["operation"], "patch_file");
-        assert_eq!(proposal["payload"]["validation_status"], "Valid");
-        let request_payload = crate::tests::request_only_proposal_payload(
-            run_id,
-            proposal["payload"]["proposal_id"].as_str().unwrap(),
+            .filter(|event| {
+                event["kind"] == "ToolIntentDenied"
+                    && event["payload"]["tool_id"] == WORKSPACE_READ_TOOL_ID
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(denied.len(), 6);
+        for event in denied {
+            assert_eq!(
+                event["payload"]["progress_outcome"]["status"],
+                "replan_required"
+            );
+            assert_eq!(
+                event["payload"]["progress_outcome"]["workspace_mutation_proposed"],
+                false
+            );
+        }
+        assert!(!event_list
+            .iter()
+            .any(|event| event["kind"] == "WorkspacePatchProposed"));
+        assert_eq!(
+            std::fs::read(temp.path().join(".brownie/todo.md")).unwrap(),
+            original_todo
         );
-        let patch_new_text = request_payload["patch_new_text"]
-            .as_str()
-            .expect("patch new text");
-        assert!(
-            patch_new_text.contains("E-04a: Update `.github/workflows/ci.yml` Rust quality checks")
-        );
-        assert!(patch_new_text
-            .contains("E-04b: Update `.github/workflows/ci.yml` Node workspace checks"));
-        assert!(patch_new_text.contains("E-04c: Add release gate and Product Ready guard CI steps"));
-        assert!(!patch_new_text.contains("TODO-decomposition"));
-        assert!(!patch_new_text.contains("Split blocked TODO"));
     }
 
     #[test]
@@ -65012,7 +64974,7 @@ content-length: {}
     }
 
     #[test]
-    fn openai_phase_loop_slice_denies_additional_workspace_read_after_budget_exhausted() {
+    fn openai_read_budget_exhaustion_stops_without_inventing_project_changes() {
         let _lock = super::tests::lock_env();
         let _guard = EnvGuard::clear();
         let temp = tempfile::tempdir().unwrap();
@@ -65041,6 +65003,7 @@ content-length: {}
             "- [ ] E-08: Close supply-chain evidence fail-closed gaps:\n  Add coverage proving missing tools, scan command failures, and network errors cannot be treated as successful release evidence.\n\n- [ ] E-09: Produce release artifacts.\n",
         )
         .expect("todo");
+        let original_todo = std::fs::read(temp.path().join(".brownie/todo.md")).unwrap();
         let (base_url, handle) = spawn_mock_many(vec![
             r#"{"choices":[{"message":{"content":"```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Read first bounded file.\",\"input\":{\"path\":\"scripts/release-gate.mjs\"}}]}\n```"}}]}"#,
             r#"{"choices":[{"message":{"content":"```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Read second bounded file.\",\"input\":{\"path\":\"scripts/guard-supply-chain-artifact-evidence.mjs\"}}]}\n```"}}]}"#,
@@ -65081,23 +65044,20 @@ content-length: {}
                     .as_str()
                     .is_some_and(|reason| reason.contains("read budget is exhausted"))
         }));
-        let proposal = event_list
-            .iter()
-            .find(|event| event["kind"] == "WorkspacePatchProposed")
-            .expect("runtime-synthesized follow-up proposal");
-        assert_eq!(proposal["payload"]["path"], ".brownie/todo.md");
-        assert_eq!(proposal["payload"]["operation"], "patch_file");
-        assert_eq!(proposal["payload"]["validation_status"], "Valid");
-        let request_payload = crate::tests::request_only_proposal_payload(
-            run_id,
-            proposal["payload"]["proposal_id"].as_str().unwrap(),
-        );
-        let patch_new_text = request_payload["patch_new_text"]
+        let result = run.result.expect("run result");
+        assert_eq!(result["status"], "Failed");
+        assert_eq!(result["agent_loop"]["final_state"], "Failed");
+        assert!(result.get("llm_provider_failure").is_none());
+        assert!(result["agent_loop"]["completion_summary"]
             .as_str()
-            .expect("patch new text");
-        assert!(patch_new_text.contains("E-08a: Fail closed on missing supply-chain tooling"));
-        assert!(
-            patch_new_text.contains("E-08b: Fail closed on supply-chain scan and network failures")
+            .unwrap()
+            .contains("valid workspace.write proposal"));
+        assert!(!event_list
+            .iter()
+            .any(|event| event["kind"] == "WorkspacePatchProposed"));
+        assert_eq!(
+            std::fs::read(temp.path().join(".brownie/todo.md")).unwrap(),
+            original_todo
         );
     }
 
@@ -69951,3 +69911,49 @@ mod agentmodes_test_support;
 
 #[cfg(test)]
 mod json_privacy_assertions;
+
+#[cfg(test)]
+mod bounded_progress_public_projection_tests {
+    use super::*;
+
+    fn denied_read() -> Value {
+        json!({"tool_id": WORKSPACE_READ_TOOL_ID, "allowed": false,
+            "progress_outcome": {"status": "replan_required",
+                "reason_code": "workspace_read_not_admitted",
+                "next_action": "revise_inputs_or_objective",
+                "workspace_mutation_proposed": false}})
+    }
+
+    #[test]
+    fn publishes_only_the_closed_denied_read_outcome() {
+        let payload = denied_read();
+        let public = sanitize_ledger_payload(Some(payload.clone())).unwrap();
+        assert_eq!(public["progress_outcome"], payload["progress_outcome"]);
+        for (key, value) in [
+            ("raw_context", json!("private content")),
+            ("status", json!("completed")),
+            ("workspace_mutation_proposed", json!(true)),
+        ] {
+            let mut invalid = denied_read();
+            invalid["progress_outcome"][key] = value;
+            let public = sanitize_ledger_payload(Some(invalid)).unwrap();
+            assert!(public.get("progress_outcome").is_none());
+            assert!(!public.to_string().contains("private content"));
+        }
+    }
+
+    #[test]
+    fn does_not_publish_progress_for_allowed_or_other_tool_intents() {
+        for (key, value) in [
+            ("allowed", json!(true)),
+            ("tool_id", json!("workspace.write")),
+        ] {
+            let mut invalid = denied_read();
+            invalid[key] = value;
+            assert!(sanitize_ledger_payload(Some(invalid))
+                .unwrap()
+                .get("progress_outcome")
+                .is_none());
+        }
+    }
+}

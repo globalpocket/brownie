@@ -32,19 +32,19 @@
   "metrics": {
     "files": {
       "crates/brownie-runtime/src/lib.rs": {
-        "line_count": 69953,
+        "line_count": 69959,
         "public_items": 4,
-        "private_items": 545,
-        "production_line_count": 16150,
-        "test_line_count": 53803,
-        "state_mutation_mentions": 309,
-        "durable_write_mentions": 230,
-        "permission_decision_mentions": 273,
+        "private_items": 544,
+        "production_line_count": 16108,
+        "test_line_count": 53851,
+        "state_mutation_mentions": 307,
+        "durable_write_mentions": 228,
+        "permission_decision_mentions": 270,
         "recovery_mentions": 2263,
         "rpc_dispatch_mentions": 90,
         "approval_mentions": 536,
         "mcp_mentions": 600,
-        "product_dod_mentions": 922,
+        "product_dod_mentions": 921,
         "diagnostics_mentions": 1815
       },
       "crates/brownie-runtime/src/codebase_index.rs": {
@@ -62,17 +62,17 @@
         "diagnostics_mentions": 0
       },
       "crates/brownie-runtime/src/controlled_tool_execution.rs": {
-        "line_count": 8365,
+        "line_count": 8391,
         "public_items": 70,
         "private_items": 123,
-        "state_mutation_mentions": 49,
-        "durable_write_mentions": 49,
+        "state_mutation_mentions": 50,
+        "durable_write_mentions": 50,
         "permission_decision_mentions": 109,
         "recovery_mentions": 67,
         "rpc_dispatch_mentions": 0,
         "approval_mentions": 228,
         "mcp_mentions": 368,
-        "product_dod_mentions": 89,
+        "product_dod_mentions": 92,
         "diagnostics_mentions": 14
       },
       "crates/brownie-runtime/src/headless_continue.rs": {
