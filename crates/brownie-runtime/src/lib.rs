@@ -3243,31 +3243,6 @@ fn is_recoverable_workspace_read_denial_for_followup(event: &LedgerEvent) -> boo
             })
 }
 
-fn is_duplicate_workspace_read_denial(event: &LedgerEvent) -> bool {
-    matches!(
-        event.kind,
-        LedgerEventKind::ToolIntentDenied | LedgerEventKind::ToolExecutionDenied
-    ) && event
-        .payload
-        .as_ref()
-        .and_then(|payload| payload.get("tool_id"))
-        .and_then(Value::as_str)
-        == Some(WORKSPACE_READ_TOOL_ID)
-        && event
-            .payload
-            .as_ref()
-            .and_then(|payload| payload.get("reason"))
-            .and_then(Value::as_str)
-            .is_some_and(|reason| {
-                reason.contains("Duplicate workspace.read")
-                    || reason.contains("Additional workspace.read is not progress")
-                    || reason.contains("Repair feedback already embeds previous workspace.read")
-                    || (reason.contains("Selected TODO says to patch only")
-                        && reason.contains("is not progress")
-                        && reason.contains("request workspace.write"))
-            })
-}
-
 fn is_recoverable_workspace_write_rejection_for_followup(
     event: &LedgerEvent,
     task_requires_workspace_write: bool,
@@ -3480,7 +3455,7 @@ mod workspace_edit_completion_gate_tests {
         };
 
         assert!(is_recoverable_workspace_read_denial_for_followup(&event));
-        assert!(is_duplicate_workspace_read_denial(&event));
+        assert!(!is_valid_workspace_patch_proposal_event(&event));
     }
 
     #[test]
@@ -3499,7 +3474,7 @@ mod workspace_edit_completion_gate_tests {
         };
 
         assert!(is_recoverable_workspace_read_denial_for_followup(&denied));
-        assert!(is_duplicate_workspace_read_denial(&denied));
+        assert!(!is_valid_workspace_patch_proposal_event(&denied));
         assert!(should_run_second_pass_for_events(
             &[denied],
             "Patch only scripts/release-local-artifact.mjs."
