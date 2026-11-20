@@ -121,6 +121,32 @@ function boundedValidationStdin() {
   return buffer.subarray(0, length);
 }
 
+// Decomposition may replace only the bound selected block. General queue
+// validity alone cannot prove that a proposal preserved its parent lineage.
+export function validateDecompositionTransition(selected, current, hunks) {
+  const parent = selected.trimEnd();
+  if (!parent || !Array.isArray(hunks) || hunks.length !== 1
+      || hunks[0].old_text !== parent || typeof hunks[0].new_text !== 'string'
+      || hunks[0].occurrence != null) throw new Error('decomposition must replace exactly the selected parent');
+  const matches = uncheckedTodoBlocks(current).filter(block => block === parent);
+  if (matches.length !== 1) throw new Error('selected decomposition parent is missing or ambiguous');
+  const replacement = hunks[0].new_text;
+  const leaves = uncheckedTodoBlocks(replacement);
+  if (!leaves.length || checkedTodoBlocks(replacement).length
+      || leaves.reduce((remaining, leaf) => remaining.replace(leaf, ''), replacement).trim()) {
+    throw new Error('decomposition replacement must contain only unchecked leaves');
+  }
+  const parentId = todoId(parent);
+  const permittedSources = new Set([parentId, sourceTodoId(parent)].filter(Boolean));
+  const ids = new Set();
+  for (const leaf of leaves) {
+    const id = todoId(leaf);
+    if (!id || id === parentId || ids.has(id) || id === sourceTodoId(leaf)
+        || !permittedSources.has(sourceTodoId(leaf))) throw new Error('invalid decomposition parent lineage');
+    ids.add(id);
+  }
+}
+
 export function validateRuntimeProposalRequest(bytes, workspaceRoot) {
   if (bytes.length > 1024 * 1024) throw new Error('runtime validation input exceeds limit');
   const request = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
@@ -146,6 +172,10 @@ export function validateRuntimeProposalRequest(bytes, workspaceRoot) {
   const currentBytes = boundedValidationBytes(path.join(workspaceRoot, proposal.path));
   if (validationDigest(currentBytes) !== params.expected_target_sha256) throw new Error('stale queue target');
   let candidate = new TextDecoder('utf-8', { fatal: true }).decode(currentBytes);
+  if (metadata.bdk_state === 'decompose_todo') {
+    if (proposal.operation !== 'patch_file') throw new Error('decomposition requires a bounded patch');
+    validateDecompositionTransition(metadata.selected_todo_text, candidate, params.patch_hunks);
+  }
   if (proposal.operation === 'patch_file') {
     if (!Array.isArray(params.patch_hunks) || params.patch_hunks.length < 1 || params.patch_hunks.length > 5) throw new Error('missing bounded patch material');
     const ranges = [];

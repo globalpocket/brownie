@@ -6,7 +6,50 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { validateTodoDecompositionText } from './guard-todo-decomposition.mjs';
-import { validateQueueApplyCandidate } from './repair-todo-decomposition.mjs';
+import { validateQueueApplyCandidate, validateDecompositionTransition, validateRuntimeProposalRequest } from './repair-todo-decomposition.mjs';
+
+test('Runtime proposal endpoint rejects decomposition of an unrelated parent without writing', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-bound-parent-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, '.brownie'));
+  const selected = '- [ ] selected: Decompose bounded work';
+  const other = '- [ ] other: Preserve unrelated work';
+  const current = `${selected}\n\n${other}\n`;
+  const target = path.join(root, '.brownie/todo.md');
+  fs.writeFileSync(target, current);
+  const digest = value => createHash('sha256').update(value).digest('hex');
+  const metadata = { selected_todo_text: selected, selected_todo_sha256: digest(selected),
+    bdk_state: 'decompose_todo', queue_relative_path: '.brownie/todo.md' };
+  const request = {
+    schema_version: 1, context: { metadata, metadata_sha256: `sha256:${digest(JSON.stringify(metadata))}` },
+    proposal: { proposal: { proposal_id: 'p1', path: '.brownie/todo.md', operation: 'patch_file' } },
+    apply_params: { proposal_id: 'p1', run_id: 'r1', expected_target_sha256: `sha256:${digest(current)}`,
+      patch_hunks: [{ old_text: other, new_text: '- [ ] child: Patch only `package.json`\n  Source TODO: selected.' }] }
+  };
+  assert.throws(() => validateRuntimeProposalRequest(Buffer.from(JSON.stringify(request)), root), /exactly the selected parent/u);
+  assert.equal(fs.readFileSync(target, 'utf8'), current);
+});
+
+test('decomposition transition binds exact parent and refuses unrelated edits or forged lineage', () => {
+  const parent = '- [ ] parent: Split work\n  Source TODO: ancestor.';
+  const leaf = '- [ ] child: Patch only `package.json`\n  Source TODO: parent.';
+  const current = `# Queue\n${parent}\n\n- [ ] unrelated: Preserve this\n`;
+  const hunk = { old_text: parent, new_text: leaf };
+  assert.doesNotThrow(() => validateDecompositionTransition(parent, current, [hunk]));
+  assert.doesNotThrow(() => validateDecompositionTransition(parent, current, [{ ...hunk,
+    new_text: `${leaf}\n\n- [ ] child2: Create only \`new.txt\`\n  Source TODO: ancestor.` }]));
+  for (const replacement of [parent, '', leaf.replace('parent.', 'parent-extra.'),
+    leaf.replace('parent.', 'child.'), `${leaf}\n${leaf}`, `${leaf}\n- [x] done: hidden completion`,
+    `unbound prefix\n${leaf}`]) {
+    assert.throws(() => validateDecompositionTransition(parent, current, [{ ...hunk, new_text: replacement }]));
+  }
+  for (const hunks of [[{ ...hunk, old_text: 'Split work' }], [hunk, hunk],
+    [{ ...hunk, occurrence: 1 }], [{ ...hunk, old_text: current }]]) {
+    assert.throws(() => validateDecompositionTransition(parent, current, hunks));
+  }
+  assert.throws(() => validateDecompositionTransition(parent, `${current}\n${parent}`, [hunk]));
+  assert.throws(() => validateDecompositionTransition(parent, current.replace(parent, 'changed'), [hunk]));
+});
 
 test('external queue apply policy retains Runtime rejection and acceptance cases without mutation', t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-external-apply-'));
