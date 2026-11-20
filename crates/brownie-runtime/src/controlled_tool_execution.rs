@@ -2850,20 +2850,6 @@ pub(super) fn todo_md_workspace_write_rejection_reason(
         return None;
     }
     let path = input.get("path").and_then(Value::as_str)?;
-    if selected_todo_forbids_workspace_write_path(&record.goal, path) {
-        return Some(
-            "Selected TODO `Forbidden changes:` forbids writing this path; choose the bounded target file or fail closed.",
-        );
-    }
-    let patch_only_paths = patch_only_paths_from_goal(&record.goal);
-    if !is_todo_workspace_path(path)
-        && !patch_only_paths.is_empty()
-        && !patch_only_paths.iter().any(|allowed| allowed == path)
-    {
-        return Some(
-            "implementation_target_violation: Selected TODO `Patch only` permits a different bounded target path; fail closed.",
-        );
-    }
     let decomposition_only = selected_todo_requires_decomposition_only(&record.goal);
     if !is_todo_workspace_path(path) {
         if decomposition_only {
@@ -3284,35 +3270,6 @@ fn verification_failure_requires_target_file_repair(goal: &str) -> bool {
         && selected_todo_mentions_non_todo_workspace_path(goal)
 }
 
-fn selected_todo_forbids_workspace_write_path(goal: &str, path: &str) -> bool {
-    let Some(block) = selected_todo_block_text_from_goal(goal) else {
-        return false;
-    };
-    for line in block.lines().map(str::trim) {
-        if !line.starts_with("Forbidden changes:") {
-            continue;
-        }
-        if backticked_values(line).iter().any(|target| target == path) {
-            return true;
-        }
-    }
-    false
-}
-
-fn backticked_values(text: &str) -> Vec<String> {
-    let mut values = Vec::new();
-    let mut remainder = text;
-    while let Some(start) = remainder.find('`') {
-        let after_start = &remainder[start + 1..];
-        let Some(end) = after_start.find('`') else {
-            break;
-        };
-        values.push(after_start[..end].to_string());
-        remainder = &after_start[end + 1..];
-    }
-    values
-}
-
 fn selected_todo_block_text_from_goal(goal: &str) -> Option<String> {
     let marker = "\n## Selected TODO\n";
     let marker_index = goal.find(marker)?;
@@ -3521,37 +3478,6 @@ fn truncated_workspace_read_next_offset(
         })
         .flatten()
     }))
-}
-
-fn patch_only_paths_from_goal(goal: &str) -> Vec<String> {
-    let goal = selected_todo_section(goal);
-    let first_line = goal
-        .lines()
-        .find(|line| line.contains("Patch only `"))
-        .unwrap_or(goal);
-    let marker = "Patch only `";
-    let Some(start) = first_line.find(marker) else {
-        return Vec::new();
-    };
-    backticked_values(&first_line[start..])
-        .into_iter()
-        .filter(|path| !path.trim().is_empty())
-        .collect()
-}
-
-fn selected_todo_section(goal: &str) -> &str {
-    let Some(marker_start) = goal.find("## Selected TODO") else {
-        return goal;
-    };
-    let selected = &goal[marker_start..];
-    if let Some(next_section) = selected.get("## Selected TODO".len()..).and_then(|tail| {
-        tail.find("\n## ")
-            .map(|index| "## Selected TODO".len() + index)
-    }) {
-        &selected[..next_section]
-    } else {
-        selected
-    }
 }
 
 fn append_approved_mcp_tool_execution(
@@ -6365,6 +6291,22 @@ mod mcp_approval_lock_tests {
     }
 
     #[test]
+    fn unbound_workspace_write_scope_is_not_inferred_from_project_goal_syntax() {
+        let mut record = test_task_record();
+        record.goal = "\n## Selected TODO\n- [ ] plan: Patch only `other.txt`.\n  Forbidden changes: do not edit `notes.txt`.\n".into();
+        let input = json!({"path":"notes.txt", "operation":"patch_file"});
+        assert!(todo_md_workspace_write_rejection_reason(&record, &input).is_none());
+        record.execution_constraints = Some(brownie_protocol::TaskExecutionConstraints {
+            write_paths: Some(vec!["other.txt".into()]),
+            write_operations: Some(vec!["patch_file".into()]),
+            ..Default::default()
+        });
+        assert!(todo_md_workspace_write_rejection_reason(&record, &input)
+            .unwrap()
+            .contains("task_execution_constraint_denied"));
+    }
+
+    #[test]
     fn workspace_proposal_preserves_inline_text_without_inventing_todo_metadata() {
         for constrained in [false, true] {
             let temp = tempfile::tempdir().unwrap();
@@ -7257,73 +7199,6 @@ mod mcp_approval_lock_tests {
         );
 
         assert!(reason.is_none(), "{reason:?}");
-    }
-
-    #[test]
-    fn selected_todo_forbidden_changes_rejects_named_workspace_write_path() {
-        let mut record = test_task_record();
-        record.goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-16a-fixture-objective: Patch only `scripts/allowed.mjs`.\n  Forbidden changes: do not edit `scripts/forbidden.mjs`.\n".to_string();
-
-        let reason = todo_md_workspace_write_rejection_reason(
-            &record,
-            &json!({
-                "path": "scripts/forbidden.mjs",
-                "operation": "patch_file",
-                "old_text": "old",
-                "new_text": "new"
-            }),
-        );
-
-        assert_eq!(
-            reason,
-            Some("Selected TODO `Forbidden changes:` forbids writing this path; choose the bounded target file or fail closed.")
-        );
-
-        assert!(todo_md_workspace_write_rejection_reason(
-            &record,
-            &json!({
-                "path": "scripts/allowed.mjs",
-                "operation": "patch_file",
-                "old_text": "old",
-                "new_text": "new"
-            }),
-        )
-        .is_none());
-    }
-
-    #[test]
-    fn selected_todo_patch_only_rejects_unrelated_workspace_write_path() {
-        let mut record = test_task_record();
-        record.goal = "# Brownie controller self-update recovery\n\n## Selected TODO\n\n- [ ] phase-loop-self-update: Patch only `scripts/phase-loop-self-update.mjs`.\n  Route: implementation.\n"
-            .to_string();
-
-        let reason = todo_md_workspace_write_rejection_reason(
-            &record,
-            &json!({
-                "path": "README.md",
-                "operation": "patch_file",
-                "old_text": "old",
-                "new_text": "new"
-            }),
-        );
-
-        assert_eq!(
-            reason,
-            Some(
-                "implementation_target_violation: Selected TODO `Patch only` permits a different bounded target path; fail closed."
-            )
-        );
-
-        assert!(todo_md_workspace_write_rejection_reason(
-            &record,
-            &json!({
-                "path": "scripts/phase-loop-self-update.mjs",
-                "operation": "patch_file",
-                "old_text": "old",
-                "new_text": "new"
-            }),
-        )
-        .is_none());
     }
 
     #[test]

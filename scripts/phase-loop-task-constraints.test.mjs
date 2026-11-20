@@ -126,3 +126,30 @@ test('migrated queue-repair read exception needs an explicit controller state', 
   assert.deepEqual(repair.read_paths, ['.brownie/todo.md']);
   assert.ok(!repair.read_paths.includes('scripts/release-gate.mjs'));
 });
+
+// Original Runtime goal fixtures; project scope is now compiled externally.
+const migratedWriteScopeCases = [
+  {
+    "name": "selected_todo_forbidden_changes_rejects_named_workspace_write_path",
+    "goal": "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-16a-fixture-objective: Patch only `scripts/allowed.mjs`.\n  Forbidden changes: do not edit `scripts/forbidden.mjs`.\n",
+    "denied": "scripts/forbidden.mjs",
+    "allowed": "scripts/allowed.mjs"
+  },
+  {
+    "name": "selected_todo_patch_only_rejects_unrelated_workspace_write_path",
+    "goal": "# Brownie controller self-update recovery\n\n## Selected TODO\n\n- [ ] phase-loop-self-update: Patch only `scripts/phase-loop-self-update.mjs`.\n  Route: implementation.\n",
+    "denied": "README.md",
+    "allowed": "scripts/phase-loop-self-update.mjs"
+  }
+];
+for (const fixture of migratedWriteScopeCases) {
+  test(`external write scope: ${fixture.name}`, () => {
+    const constraints = compileTaskConstraints(fixture.goal);
+    assert.deepEqual(constraints.write_paths, [fixture.allowed]);
+    assert.deepEqual(constraints.write_operations, ['patch_file']);
+    assert.equal(constraints.write_paths.includes(fixture.denied), false);
+    if (fixture.goal.includes('Forbidden changes:')) {
+      assert.ok(constraints.denied_write_paths.includes(fixture.denied));
+    }
+  });
+}

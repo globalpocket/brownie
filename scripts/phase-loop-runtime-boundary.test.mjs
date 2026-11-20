@@ -648,6 +648,16 @@ test('Runtime never rewrites inline project TODO metadata before proposal creati
   }
 });
 
+test('Runtime write scope does not parse project Patch only or Forbidden changes clauses', () => {
+  const source = fs.readFileSync(path.join(repoRoot, 'crates/brownie-runtime/src/controlled_tool_execution.rs'), 'utf8');
+  assert.doesNotMatch(source, /fn selected_todo_forbids_workspace_write_path|fn patch_only_paths_from_goal|fn selected_todo_section/u);
+  const start = source.indexOf('pub(super) fn todo_md_workspace_write_rejection_reason(');
+  const end = source.indexOf('\nfn workspace_read_intent_runtime_rejection_reason(', start);
+  assert.ok(start > 0 && end > start);
+  assert.match(source.slice(start, end), /constraints\.allows_write/u);
+  assert.doesNotMatch(source.slice(start, end), /Forbidden changes:|patch_only_paths/u);
+});
+
 test('Runtime read admission uses typed constraints without project prompt interpretation', () => {
   const source = fs.readFileSync(path.join(repoRoot, 'crates/brownie-runtime/src/controlled_tool_execution.rs'), 'utf8');
   const start = source.indexOf('fn workspace_read_intent_runtime_rejection_reason(');
