@@ -153,3 +153,88 @@ for (const fixture of migratedWriteScopeCases) {
     }
   });
 }
+
+// Legacy prompt fixtures now require an explicit controller state. Unbounded
+// implementation titles must be re-estimated before admission.
+const migratedQueueAdmissionCases = [
+  {
+    "name": "bounded_leaf_todo_write_policy_denies_todo_rewrite_without_an_explicit_exception",
+    "goal": "# Brownie Phase Loop Effective Prompt\n\n- leaf_todo_write_forbidden_policy: bounded Patch only leaves must not rewrite the TODO queue.\n\n## Selected TODO\n\n- [ ] E-23a-release-artifact-portable-archive-leaf-01: Patch only `scripts/release-local-artifact.mjs`:\n  Route: implementation.\n  Source TODO: E-23a-release-artifact-portable-archive.\n  Depends on: <none>.\n  Completion condition: the release artifact can be archived.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root check`.\n",
+    "state": "implementation",
+    "target": ".brownie/todo.md",
+    "allowed": false,
+    "queuePath": ".brownie/todo.md"
+  },
+  {
+    "name": "oversized_bounded_leaf_repair_still_denies_todo_replacement",
+    "goal": "# Brownie Phase Loop Effective Prompt\n\n- leaf_todo_write_forbidden_policy: bounded Patch only leaves must not rewrite the TODO queue without an exception.\n- leaf_oversized_repair_next_tool_policy: replace the full selected TODO block with one smaller concrete follow-up leaf.\n\n## Selected TODO\n\n- [ ] E-23a-release-artifact-portable-archive-leaf-01: Patch only `scripts/release-local-artifact.mjs`:\n  Route: implementation.\n  Source TODO: E-23a-release-artifact-portable-archive.\n  Depends on: <none>.\n  Completion condition: the release artifact can be archived.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root check`.\n",
+    "state": "implementation",
+    "target": ".brownie/todo.md",
+    "allowed": false,
+    "queuePath": ".brownie/todo.md"
+  },
+  {
+    "name": "implementation_todos_with_named_target_files_cannot_patch_todo_md",
+    "goal": "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] BENCH-doc: Add a short evidence note to docs/architecture/lan-llm-phase-loop-tuning.md.\n",
+    "state": "implementation",
+    "target": "todo.md",
+    "allowed": null,
+    "queuePath": "todo.md"
+  },
+  {
+    "name": "repair_feedback_can_patch_todo_md_after_todo_decomposition_guard_failure",
+    "goal": "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs` to make generated soak evidence satisfied.\n\n## Previous Repair Feedback\n\n- repair_reason: `todo_decomposition_guard_failed_after_todo_apply`\n- repair_hint: \"Repair `.brownie/todo.md` only: remove duplicate leaf ids.\"\n",
+    "state": "todo_queue_repair",
+    "target": ".brownie/todo.md",
+    "allowed": true,
+    "queuePath": ".brownie/todo.md"
+  },
+  {
+    "name": "runtime_failure_with_todo_guard_trace_can_patch_todo_md",
+    "goal": "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs` to make generated soak evidence satisfied.\n\n## Previous Repair Feedback\n\n- repair_reason: `runtime_terminal_failure`\n- failed_command_0: `pnpm --workspace-root guard:todo-decomposition`\n- process_stderr_tail: \"TODO decomposition guard failed: duplicate unchecked TODO id appears 5 times.\"\n",
+    "state": "todo_queue_repair",
+    "target": ".brownie/todo.md",
+    "allowed": true,
+    "queuePath": ".brownie/todo.md"
+  },
+  {
+    "name": "explicit_todo_md_maintenance_todos_can_patch_todo_md",
+    "goal": "# Brownie Phase Loop Effective Prompt\n\n- leaf_todo_write_forbidden_policy: bounded Patch only leaves must not rewrite the TODO queue without an exception.\n\n## Selected TODO\n\n- [ ] TODO-maintenance: Update todo.md by decomposing an oversized blocker TODO.\n",
+    "state": "decompose_todo",
+    "target": "todo.md",
+    "allowed": true,
+    "queuePath": "todo.md"
+  },
+  {
+    "name": "decompose_todo_state_cannot_patch_implementation_files",
+    "goal": "# Brownie Phase Loop Effective Prompt\n\n## BDK Execution Packet\n\n- state: `decompose_todo`\n\n## Selected TODO\n\n- [ ] TODO-decompose-blocked-queue-abc123: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs.\n",
+    "state": "decompose_todo",
+    "target": "scripts/release-supply-chain-artifact-evidence.mjs",
+    "allowed": false,
+    "queuePath": ".brownie/todo.md"
+  },
+  {
+    "name": "implementation_todo_with_decomposition_context_can_patch_target_file",
+    "goal": "# Brownie Phase Loop Effective Prompt\n\nQueue policy: Brownie owns TODO decomposition and may split broad todo.md items.\n\n## BDK Execution Packet\n\n- state: `implement_patch`\n\n## Selected TODO\n\n- [ ] E-16a-artifact-source-local-producer: Patch only `scripts/release-local-artifact.mjs` to record artifact source identity at build time:\n  Route: implementation.\n  Source TODO: E-16a-artifact-source-identity.\n  Depends on: <none>.\n  Completion condition: local artifact evidence records source identity.\n  Forbidden changes: do not mark Runtime Release Ready.\n  Verification: run `pnpm --workspace-root guard:supply-chain-artifact-evidence`.\n",
+    "state": "implementation",
+    "target": "scripts/release-local-artifact.mjs",
+    "allowed": true,
+    "queuePath": ".brownie/todo.md"
+  }
+];
+for (const fixture of migratedQueueAdmissionCases) {
+  test(`external queue admission: ${fixture.name}`, () => {
+    const compile = state => compileTaskConstraints(fixture.goal, {state, queuePath: fixture.queuePath});
+    if (fixture.allowed === null) {
+      assert.throws(() => compile(fixture.state), /bounded Patch\/Create scope required/u);
+      return;
+    }
+    const constraints = compile(fixture.state);
+    assert.equal(constraints.write_paths.includes(fixture.target), fixture.allowed);
+    assert.deepEqual(constraints.write_operations, ['patch_file']);
+    if (fixture.state === 'todo_queue_repair') {
+      assert.equal(compile('implementation').write_paths.includes(fixture.queuePath), false,
+        'repair prose alone cannot authorize a queue write');
+    }
+  });
+}

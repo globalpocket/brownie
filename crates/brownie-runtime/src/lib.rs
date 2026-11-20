@@ -3270,10 +3270,10 @@ fn is_recoverable_workspace_write_rejection_for_followup(
             && tool_id == Some(WORKSPACE_WRITE_TOOL_ID))
             || (matches!(code, Some("block_too_large" | "missing_closing_fence"))
                 && tool_id == Some("<parse-error>"))))
-        // This code is emitted only by the TODO decomposition provenance gate;
-        // its presence is the authoritative evidence that a write repair is
-        // required even when the natural-language goal omits the word "write".
-        || (code == Some("todo_md_write_denied_for_implementation_todo")
+        // An admitted write constraint was violated. A bounded repair pass
+        // may correct the request even when the goal omits "write"; the same
+        // constraint is enforced again and this event is not edit evidence.
+        || (code == Some("task_execution_constraint_denied")
             && tool_id == Some(WORKSPACE_WRITE_TOOL_ID))
 }
 
@@ -3499,7 +3499,7 @@ mod workspace_edit_completion_gate_tests {
     }
 
     #[test]
-    fn rejected_todo_decomposition_write_is_recoverable_and_not_valid_edit_evidence() {
+    fn rejected_constraint_write_is_recoverable_and_not_valid_edit_evidence() {
         let rejected = brownie_store::LedgerEvent {
             event_id: "event_todo_write_rejected".to_string(),
             task_id: "task_todo_write_rejected".to_string(),
@@ -3508,8 +3508,8 @@ mod workspace_edit_completion_gate_tests {
             timestamp: "2026-10-12T00:00:00Z".to_string(),
             payload: Some(json!({
                 "tool_id": WORKSPACE_WRITE_TOOL_ID,
-                "code": "todo_md_write_denied_for_implementation_todo",
-                "reason": "Every TODO decomposition leaf `Source TODO:` must reference the selected parent TODO."
+                "code": "task_execution_constraint_denied",
+                "reason": "task_execution_constraint_denied: workspace write exceeds admitted restrictions"
             })),
             payload_envelope: None,
         };
@@ -3530,7 +3530,7 @@ mod workspace_edit_completion_gate_tests {
     }
 
     #[test]
-    fn rejected_todo_decomposition_write_admits_second_pass_repair() {
+    fn rejected_constraint_write_admits_second_pass_repair() {
         let rejected = brownie_store::LedgerEvent {
             event_id: "event_todo_write_rejected".to_string(),
             task_id: "task_todo_write_rejected".to_string(),
@@ -3539,7 +3539,7 @@ mod workspace_edit_completion_gate_tests {
             timestamp: "2026-10-12T00:00:00Z".to_string(),
             payload: Some(json!({
                 "tool_id": WORKSPACE_WRITE_TOOL_ID,
-                "code": "todo_md_write_denied_for_implementation_todo"
+                "code": "task_execution_constraint_denied"
             })),
             payload_envelope: None,
         };
@@ -3547,7 +3547,7 @@ mod workspace_edit_completion_gate_tests {
         assert_ne!(rejected.kind, LedgerEventKind::ToolExecutionCompleted);
         assert!(should_run_second_pass_for_events(
             &[rejected],
-            "Decompose the selected TODO into concrete child items."
+            "Satisfy the admitted execution policy."
         ));
     }
 
@@ -14158,16 +14158,17 @@ fn append_workspace_patch_proposal(
         proposal_input =
             normalize_json_line_block_patch_input_from_target(store, path, &proposal_input);
     }
-    if let Some(reason) =
-        controlled_tool_execution::todo_md_workspace_write_rejection_reason(record, &proposal_input)
-    {
+    if let Some(reason) = controlled_tool_execution::workspace_write_constraint_rejection_reason(
+        record,
+        &proposal_input,
+    ) {
         store.tasks().append_task_event_with_payload(
             record,
             LedgerEventKind::ToolIntentRejected,
             Some(json!({
                 "tool_id": WORKSPACE_WRITE_TOOL_ID,
                 "reason": reason,
-                "code": "todo_md_write_denied_for_implementation_todo"
+                "code": "task_execution_constraint_denied"
             })),
         )?;
         return Ok(());
