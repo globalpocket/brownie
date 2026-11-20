@@ -6,6 +6,103 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { validateTodoDecompositionText } from './guard-todo-decomposition.mjs';
+import { validateQueueApplyCandidate } from './repair-todo-decomposition.mjs';
+
+test('external queue apply policy retains Runtime rejection and acceptance cases without mutation', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-external-apply-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, '.github/workflows'), { recursive: true });
+  fs.mkdirSync(path.join(root, '.brownie'));
+  fs.writeFileSync(path.join(root, 'package.json'), '{}\n');
+  fs.writeFileSync(path.join(root, '.github/workflows/release.yml'), 'name: release\n');
+  const queue = path.join(root, '.brownie/todo.md');
+  fs.writeFileSync(queue, 'original queue\n');
+  const cases = [
+    ['- [ ] E-23b-target-03: Create only `package.json`\n  Depends on: <none>\n', false, /already exists/u],
+    ['- [ ] E-23b-target-03: Patch only `package.json`\n  Depends on: E-23b-target-04\n- [ ] E-23b-target-04: Patch only `.github/workflows/release.yml`\n  Depends on: E-23b-target-03\n', false, /cyclic/u],
+    ['* [ ] TODO-maintenance-a: Patch only `package.json`\n  Depends on: TODO-maintenance-b\n* [ ] TODO-maintenance-b: Patch only `.github/workflows/release.yml`\n  Depends on: TODO-maintenance-a\n', false, /cyclic/u],
+    ['1. [ ] TODO-release-contract: Create only `package.json`\n   Depends on: <none>\n', false, /already exists/u],
+    ['- [ ] E-23b-target-03: Patch only `package.json`\n  Depends on: <none>\n- [ ] E-23b-target-04: Patch only `.github/workflows/release.yml`\n  Depends on: E-23b-target-03\n', true],
+    ['- [ ] E-23b-roundtrip: Create only `scripts/new-roundtrip.mjs`; Patch only `package.json` and `.github/workflows/release.yml`\n  Depends on: <none>\n', true]
+  ];
+  for (const [candidate, valid, reason] of cases) {
+    const result = validateQueueApplyCandidate(root, candidate);
+    assert.equal(result.valid, valid, JSON.stringify(result));
+    if (reason) assert.match(result.errors.join('\n'), reason);
+    assert.equal(fs.readFileSync(queue, 'utf8'), 'original queue\n');
+    assert.equal(fs.readFileSync(path.join(root, 'package.json'), 'utf8'), '{}\n');
+    assert.equal(fs.existsSync(path.join(root, 'scripts/new-roundtrip.mjs')), false);
+  }
+});
+
+test('external queue candidate refuses aliases, missing targets, duplicate IDs and oversized input', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-external-path-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, 'actual'));
+  fs.symlinkSync('actual', path.join(root, 'alias'));
+  for (const target of ['../outside', '/absolute', 'a/../b', 'alias/new', 'a\\b', '']) {
+    assert.equal(validateQueueApplyCandidate(root, `- [ ] leaf: Create only \`${target}\``).valid, false, target);
+  }
+  assert.equal(validateQueueApplyCandidate(root, '- [ ] leaf: Patch only `missing`').valid, false);
+  assert.equal(validateQueueApplyCandidate(root, '- [ ] leaf: Create only `new`\n- [ ] leaf: Create only `other`').valid, false);
+  assert.equal(validateQueueApplyCandidate(root, '- [ ] a: Create only `new`\n  Depends on: `b`.\n- [ ] b: Create only `other`\n  Depends on: a.').valid, false);
+  assert.equal(validateQueueApplyCandidate(root, 'x'.repeat(1024 * 1024 + 1)).valid, false);
+  assert.equal(validateQueueApplyCandidate(root, '- [ ] invalid: \ud800').valid, false);
+  assert.equal(validateQueueApplyCandidate(root, '- [ ] none: Create only `new`\n  Depends on: none').valid, false);
+  // Completed blocks delimit metadata and cannot manufacture a live cycle.
+  assert.equal(validateQueueApplyCandidate(root, '- [ ] leaf: Create only `new`\n  Depends on: <none>\n- [x] prior: old\n  Depends on: leaf').valid, true);
+});
+
+test('validation subprocess binds exact request and target bytes and never applies its candidate', t => {
+  const root = makeTempRepo();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const queue = path.join(root, '.brownie/todo.md');
+  const original = '# Brownie TODO Queue\n\n- [ ] original: Patch only `package.json`\n';
+  fs.writeFileSync(queue, original);
+  const digest = value => `sha256:${createHash('sha256').update(value).digest('hex')}`;
+  const requestFile = path.join(root, 'validation.json');
+  const request = {
+    schema_version: 1, proposal_id: 'proposal-1', run_id: 'run-1', path: '.brownie/todo.md',
+    expected_target_sha256: digest(original),
+    candidate: '# Brownie TODO Queue\n\n- [ ] candidate: Patch only `package.json`\n'
+  };
+  function invoke(value, expectedDigest) {
+    const bytes = JSON.stringify(value);
+    fs.writeFileSync(requestFile, bytes);
+    return spawnSync(process.execPath, [
+      path.join(repoRoot, 'scripts/repair-todo-decomposition.mjs'),
+      '--validate-proposal', requestFile, '--request-sha256', expectedDigest ?? digest(bytes)
+    ], { env: { ...process.env, BROWNIE_REPAIR_TODO_REPO_ROOT: root }, encoding: 'utf8' });
+  }
+  const accepted = invoke(request);
+  assert.equal(accepted.status, 0, accepted.stdout + accepted.stderr);
+  const receipt = JSON.parse(accepted.stdout);
+  assert.equal(receipt.valid, true);
+  assert.equal(receipt.applied, false);
+  assert.equal(receipt.candidate_sha256, digest(request.candidate));
+  assert.equal(receipt.proposal_id, request.proposal_id);
+  assert.equal(receipt.run_id, request.run_id);
+  assert.equal(fs.readFileSync(queue, 'utf8'), original);
+  for (const [value, expectedDigest, reason] of [
+    [request, digest('old request'), /stale validation request/u],
+    [{ ...request, expected_target_sha256: digest('old target') }, undefined, /stale queue target/u],
+    [{ ...request, path: 'package.json' }, undefined, /invalid queue validation request/u],
+    [{ ...request, unexpected: true }, undefined, /invalid queue validation request/u],
+    [{ ...request, candidate: '- [ ] leaf: Create only `package.json`' }, undefined, /already exists/u],
+    [{ ...request, candidate: '' }, undefined, /TODO|todo|queue/u]
+  ]) {
+    const rejected = invoke(value, expectedDigest);
+    assert.equal(rejected.status, 1, rejected.stdout + rejected.stderr);
+    assert.match(rejected.stdout, reason);
+    assert.equal(fs.readFileSync(queue, 'utf8'), original);
+  }
+  fs.renameSync(queue, `${queue}.original`);
+  fs.symlinkSync('todo.md.original', queue);
+  const alias = invoke(request);
+  assert.equal(alias.status, 1);
+  assert.match(alias.stdout, /unsafe symlink target/u);
+  assert.equal(fs.readFileSync(`${queue}.original`, 'utf8'), original);
+});
 
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 

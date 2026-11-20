@@ -2,7 +2,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { validateTodoDecompositionText } from './guard-todo-decomposition.mjs';
+import { createHash } from 'node:crypto';
+import { validateTodoDecompositionText, validateTodoDecompositionCandidate } from './guard-todo-decomposition.mjs';
 import { loadTodoState } from './phase-loop-todo-state.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -10,6 +11,133 @@ const __dirname = path.dirname(__filename);
 const repoRoot = process.env.BROWNIE_REPAIR_TODO_REPO_ROOT
   ? path.resolve(process.env.BROWNIE_REPAIR_TODO_REPO_ROOT)
   : path.resolve(__dirname, '..');
+
+// Project policy belongs to the external controller. This candidate check is
+// read-only: callers must bind its result to the exact proposal before apply.
+export function validateQueueApplyCandidate(workspaceRoot, candidate) {
+  const errors = [];
+  if (typeof candidate !== 'string' || Buffer.byteLength(candidate) > 1024 * 1024
+      || Buffer.from(candidate, 'utf8').toString('utf8') !== candidate) {
+    return { valid: false, errors: ['queue candidate must be bounded UTF-8 text'] };
+  }
+  const items = [];
+  for (const line of candidate.split(/\r?\n/u)) {
+    const item = /^\s*(?:[-*]|\d+[.)])\s*\[([ xX])\]\s+(.+)$/u.exec(line);
+    if (item) items.push({ live: item[1] === ' ', title: item[2], lines: [] });
+    else if (items.length) items.at(-1).lines.push(line);
+  }
+  if (items.length === 0) errors.push('queue candidate must contain TODO items');
+  const graph = new Map();
+  const root = fs.realpathSync(workspaceRoot);
+  for (const item of items.filter(item => item.live)) {
+    const colon = item.title.indexOf(':');
+    if (colon < 1) { errors.push('queue item requires an identifier'); continue; }
+    const id = item.title.slice(0, colon).trim();
+    if (graph.has(id)) errors.push(`duplicate queue identifier: ${id}`);
+    const directives = [...item.title.slice(colon + 1).matchAll(/(Patch only|Create only)(.*?)(?=Patch only|Create only|$)/gu)];
+    for (const [, directive, scope] of directives) {
+      const targets = [...scope.matchAll(/`([^`]*)`/gu)].map(match => match[1]);
+      if (!targets.length) errors.push(`${id}: ${directive} requires an explicit target`);
+      for (const target of targets) {
+        if (!target || /[\\:\x00-\x1f*?\[\]{}]/u.test(target)
+            || target.split('/').some(part => !part || part === '.' || part === '..')) {
+          errors.push(`${id}: unsafe target: ${target}`); continue;
+        }
+        const absolute = path.join(root, target);
+        // Reject symlink aliases, including ancestors of not-yet-created files.
+        let cursor = root;
+        let unsafe = false;
+        for (const component of target.split('/')) {
+          cursor = path.join(cursor, component);
+          try {
+            if (fs.lstatSync(cursor).isSymbolicLink()) { unsafe = true; break; }
+          } catch (error) {
+            if (error.code !== 'ENOENT') { unsafe = true; break; }
+          }
+        }
+        if (unsafe) { errors.push(`${id}: unsafe symlink target: ${target}`); continue; }
+        const exists = fs.existsSync(absolute);
+        if (directive === 'Create only' && exists) errors.push(`${id}: Create only target already exists: ${target}`);
+        if (directive === 'Patch only' && (!exists || !fs.statSync(absolute).isFile())) {
+          errors.push(`${id}: Patch only target does not exist as a regular file: ${target}`);
+        }
+      }
+    }
+    const dependencyLine = item.lines.find(line => /^\s*Depends on:/u.test(line));
+    const dependencies = (dependencyLine?.replace(/^\s*Depends on:\s*/u, '') ?? '')
+      .split(/[,\s]+/u).filter(token => !/^`?<none>`?\.?$/u.test(token))
+      .map(token => token.replace(/^[^A-Za-z0-9-]+|[^A-Za-z0-9-]+$/gu, ''))
+      .filter(Boolean);
+    graph.set(id, dependencies);
+  }
+  const visiting = new Set();
+  const visited = new Set();
+  function visit(id) {
+    if (visiting.has(id)) return true;
+    if (visited.has(id)) return false;
+    visiting.add(id);
+    for (const dependency of graph.get(id) ?? []) {
+      if (graph.has(dependency) && visit(dependency)) return true;
+    }
+    visiting.delete(id);
+    visited.add(id);
+    return false;
+  }
+  for (const id of graph.keys()) {
+    if (visit(id)) { errors.push('queue has cyclic Depends on graph'); break; }
+  }
+  return { valid: errors.length === 0, errors };
+}
+
+function boundedValidationBytes(filename) {
+  const fd = fs.openSync(filename, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > 2 * 1024 * 1024) throw new Error('validation input is not a bounded regular file');
+    const buffer = Buffer.alloc(2 * 1024 * 1024 + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const read = fs.readSync(fd, buffer, length, buffer.length - length, null);
+      if (!read) break;
+      length += read;
+    }
+    if (length > 2 * 1024 * 1024) throw new Error('validation input exceeds byte limit');
+    return buffer.subarray(0, length);
+  } finally { fs.closeSync(fd); }
+}
+
+const validationDigest = bytes => `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+
+// A read-only validation receipt, not an apply authorization. The caller must
+// compare request/candidate hashes and retain the normal Runtime preflight.
+export function validateQueueApplyRequest({ workspaceRoot, requestPath, requestSha256, todoPath, breakdownPath }) {
+  if (typeof todoPath !== 'string' || /[`\r\n]/u.test(todoPath)) throw new Error('invalid queue target path');
+  const bytes = boundedValidationBytes(requestPath);
+  if (validationDigest(bytes) !== requestSha256) throw new Error('stale validation request');
+  const request = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+  const keys = ['schema_version', 'proposal_id', 'run_id', 'path', 'expected_target_sha256', 'candidate'];
+  if (!request || Array.isArray(request) || typeof request !== 'object'
+      || Object.keys(request).some(key => !keys.includes(key))
+      || keys.some(key => !(key in request)) || request.schema_version !== 1
+      || !['proposal_id', 'run_id'].every(key => typeof request[key] === 'string' && /^[A-Za-z0-9_.-]{1,256}$/u.test(request[key]))
+      || request.path !== todoPath || typeof request.candidate !== 'string') {
+    throw new Error('invalid queue validation request');
+  }
+  // Validate the configured target itself before opening it, including aliases.
+  const targetCheck = validateQueueApplyCandidate(workspaceRoot, `- [ ] validation-target: Patch only \`${todoPath}\``);
+  if (!targetCheck.valid) throw new Error(targetCheck.errors.join('; '));
+  const current = boundedValidationBytes(path.join(workspaceRoot, todoPath));
+  if (validationDigest(current) !== request.expected_target_sha256) throw new Error('stale queue target');
+  const result = validateQueueApplyCandidate(workspaceRoot, request.candidate);
+  if (result.valid) result.errors.push(...validateTodoDecompositionCandidate(workspaceRoot, todoPath, breakdownPath, { todoText: request.candidate }));
+  result.valid = result.errors.length === 0;
+  return {
+    schema_version: 1, ...result, applied: false,
+    request_sha256: requestSha256, proposal_id: request.proposal_id, run_id: request.run_id,
+    expected_target_sha256: request.expected_target_sha256,
+    candidate_sha256: validationDigest(request.candidate)
+  };
+}
 
 function parseArgs(argv) {
   const args = new Map();
@@ -1724,7 +1852,13 @@ if (process.argv[1] === __filename) {
   const args = parseArgs(process.argv);
   let result;
   try {
-    result = repairTodoDecomposition({
+    result = args.has('validate-proposal') ? validateQueueApplyRequest({
+      workspaceRoot: repoRoot,
+      requestPath: args.get('validate-proposal'),
+      requestSha256: args.get('request-sha256'),
+      todoPath: args.get('todo') ?? '.brownie/todo.md',
+      breakdownPath: args.get('breakdown') ?? '.brownie/todo-breakdown.md'
+    }) : repairTodoDecomposition({
       claimPath: args.get('claim') ?? '.brownie/private/phase-loop/todo-claims/current.json',
       todoPath: args.get('todo') ?? '.brownie/todo.md',
       breakdownPath: args.get('breakdown') ?? '.brownie/todo-breakdown.md',
@@ -1733,14 +1867,15 @@ if (process.argv[1] === __filename) {
   } catch (error) {
     result = {
       schema_version: 1,
+      ...(args.has('validate-proposal') ? { valid: false } : {}),
       applied: false,
       eligible: true,
       blocked: true,
-      reason: error.code === 'workspace_package_json_invalid' ? error.code : 'todo_decomposition_repair_failed',
+      reason: args.has('validate-proposal') ? 'queue_proposal_validation_failed' : error.code === 'workspace_package_json_invalid' ? error.code : 'todo_decomposition_repair_failed',
       error_code: error.code ?? 'todo_decomposition_repair_failed',
       error_message: error.message
     };
   }
   console.log(JSON.stringify(result, null, 2));
-  process.exit(result.applied ? 0 : result.eligible ? 1 : 2);
+  process.exit(args.has('validate-proposal') ? (result.valid === true ? 0 : 1) : (result.applied ? 0 : result.eligible ? 1 : 2));
 }
