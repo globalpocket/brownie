@@ -951,11 +951,11 @@ fn contains_key_recursive(value: &serde_json::Value, key: &str) -> bool {
 }
 
 fn handle_llm_status(id: Value) -> JsonRpcResponse<Value> {
-    let store = match BrownieStore::from_env_or_cwd() {
-        Ok(store) => store,
+    let workspace_root = match BrownieStore::workspace_root_from_env_or_cwd() {
+        Ok(workspace_root) => workspace_root,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
-    match llm_provider_status_from_workspace(store.workspace_root()) {
+    match llm_provider_status_from_workspace(&workspace_root) {
         Ok(status) => result_response(id, json!(llm_status_result(status))),
         Err(error) => error_response(
             id,
@@ -981,11 +981,11 @@ fn handle_llm_health(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
         Ok(params) => params,
         Err(message) => return error_response(id, -32602, &message),
     };
-    let store = match BrownieStore::from_env_or_cwd() {
-        Ok(store) => store,
+    let workspace_root = match BrownieStore::workspace_root_from_env_or_cwd() {
+        Ok(workspace_root) => workspace_root,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
-    let default_timeout_ms = llm_provider_status_from_workspace(store.workspace_root())
+    let default_timeout_ms = llm_provider_status_from_workspace(&workspace_root)
         .map(|selection| selection.budget.request_timeout_ms)
         .unwrap_or(30_000);
     let timeout_ms = params.timeout_ms.unwrap_or(default_timeout_ms);
@@ -997,7 +997,7 @@ fn handle_llm_health(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
         );
     }
     match llm_health_from_workspace(
-        store.workspace_root(),
+        &workspace_root,
         params.allow_network,
         std::time::Duration::from_millis(timeout_ms),
     ) {
@@ -1011,11 +1011,11 @@ fn handle_llm_health(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
 }
 
 fn handle_runtime_config_get(id: Value) -> JsonRpcResponse<Value> {
-    let store = match BrownieStore::from_env_or_cwd() {
-        Ok(store) => store,
+    let workspace_root = match BrownieStore::workspace_root_from_env_or_cwd() {
+        Ok(workspace_root) => workspace_root,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
-    let status = match llm_provider_status_from_workspace(store.workspace_root()) {
+    let status = match llm_provider_status_from_workspace(&workspace_root) {
         Ok(status) => status,
         Err(error) => {
             return error_response(
@@ -1403,7 +1403,7 @@ fn handle_task_get(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         Err(message) => return error_response(id, -32602, &message),
     };
 
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
@@ -4014,7 +4014,7 @@ fn handle_run_events(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id must not be empty");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
@@ -4061,7 +4061,7 @@ fn handle_run_inspect(id: Value, params: Option<Value>) -> JsonRpcResponse<Value
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id must not be empty");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
@@ -4588,7 +4588,7 @@ fn handle_proposal_list(id: Value, params: Option<Value>) -> JsonRpcResponse<Val
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id must not be empty");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
@@ -4615,7 +4615,7 @@ fn handle_proposal_inspect(id: Value, params: Option<Value>) -> JsonRpcResponse<
     if params.proposal_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: proposal_id must not be empty");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
@@ -4716,7 +4716,7 @@ fn handle_proposal_readiness(id: Value, params: Option<Value>) -> JsonRpcRespons
             "invalid params: run_id and proposal_id are required",
         );
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -4740,7 +4740,7 @@ fn handle_proposal_apply_capability(id: Value, params: Option<Value>) -> JsonRpc
             "invalid params: run_id and proposal_id are required",
         );
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -4795,7 +4795,7 @@ fn handle_proposal_apply_dry_run_history(
             "invalid params: run_id and proposal_id are required",
         );
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -4820,7 +4820,7 @@ fn handle_proposal_audit_trail(id: Value, params: Option<Value>) -> JsonRpcRespo
             "invalid params: run_id and proposal_id are required",
         );
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -4848,7 +4848,7 @@ fn handle_proposal_review_bundle(id: Value, params: Option<Value>) -> JsonRpcRes
             "invalid params: run_id and proposal_id are required",
         );
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -4876,7 +4876,7 @@ fn handle_proposal_review_verdict(id: Value, params: Option<Value>) -> JsonRpcRe
             "invalid params: run_id and proposal_id are required",
         );
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -4904,7 +4904,7 @@ fn handle_proposal_review_report(id: Value, params: Option<Value>) -> JsonRpcRes
             "invalid params: run_id and proposal_id are required",
         );
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -6204,7 +6204,7 @@ fn handle_task_inspect(id: Value, params: Option<Value>) -> JsonRpcResponse<Valu
     if params.task_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: task_id must not be empty");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
@@ -6292,7 +6292,7 @@ fn append_headless_run_completion_finalized_event(
 }
 
 fn handle_mode_list(id: Value) -> JsonRpcResponse<Value> {
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
@@ -6309,7 +6309,7 @@ fn handle_permission_check(id: Value, params: Option<Value>) -> JsonRpcResponse<
         Err(message) => return error_response(id, -32602, &message),
     };
 
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
@@ -6338,7 +6338,7 @@ fn handle_mode_get(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         Err(message) => return error_response(id, -32602, &message),
     };
 
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
@@ -6900,7 +6900,7 @@ fn inspect_apply_capability(
     };
     store
         .tasks()
-        .append_task_event_with_payload(
+        .append_inspection_summary(
             &task,
             LedgerEventKind::WorkspacePatchApplyCapabilityChecked,
             Some(json!({
@@ -11357,7 +11357,7 @@ fn readiness_proposal(
     };
     store
         .tasks()
-        .append_task_event_with_payload(
+        .append_inspection_summary(
             &task,
             LedgerEventKind::WorkspacePatchReadinessReportCreated,
             Some(json!({
