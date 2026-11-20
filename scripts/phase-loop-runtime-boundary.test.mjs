@@ -613,7 +613,7 @@ test('production Runtime does not contain Brownie TODO planning policy', () => {
   assert.ok(testModule > 0, 'locate the unit-test module explicitly; never silently scan an empty source');
   const production = source.slice(0, testModule);
   const forbidden = [
-    /\bE-(?:04|07|14|15)\b/u,
+    /\bE-(?:04|07|14|15)(?:[a-z]|-|\b)/u,
     /PR #435/u,
     /\.brownie\/todo\.md/u,
     /fn concrete_product_ready_decomposition\b/u,
