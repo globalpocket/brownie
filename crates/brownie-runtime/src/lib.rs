@@ -44783,6 +44783,259 @@ modes:
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn r05_2_apply_write_record_process_exit_probe() {
+        if std::env::var_os("CODEX_R05_2_ROOT").is_none() {
+            return;
+        }
+        let _guard = lock_env();
+        let root = std::path::PathBuf::from(std::env::var("CODEX_R05_2_ROOT").unwrap());
+        std::fs::create_dir_all(&root).unwrap();
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", &root);
+        std::env::set_var("BROWNIE_LLM_PROVIDER", "fake");
+        let phase = std::env::var("CODEX_R05_2_PHASE").unwrap();
+        let request = if phase == "setup" {
+            std::fs::write(root.join("README.md"), "original README").unwrap();
+            let (run_id, proposal_id) = start_fake_readme_patch_proposal();
+            let approve = parse_line(&json!({"jsonrpc":"2.0","id":4,"method":"proposal.approve","params":{"run_id":run_id,"proposal_id":proposal_id,"reason":"owned crash-boundary fixture"}}).to_string());
+            assert!(approve.error.is_none());
+            let preflight = parse_line(&json!({"jsonrpc":"2.0","id":5,"method":"proposal.preflight","params":{"run_id":run_id,"proposal_id":proposal_id}}).to_string()).result.unwrap();
+            let request = json!({"jsonrpc":"2.0","id":6,"method":"proposal.apply","params":{"run_id":run_id,"proposal_id":proposal_id,"expected_target_sha256":preflight["snapshot"]["file_sha256"],"replacement_content":"new README content","authorize":true}}).to_string();
+            std::fs::write(root.join("request.json"), &request).unwrap();
+            request
+        } else {
+            std::fs::read_to_string(root.join("request.json")).unwrap()
+        };
+        let response = handle_jsonrpc_input_line(&request).unwrap();
+        std::fs::write(root.join(format!("response-{phase}.json")), response).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replace_recovery_process_loss_and_identity_controls() {
+        for case in [
+            "normal",
+            "before",
+            "before-cleanup-staging",
+            "before-cleanup-witness",
+            "before-cleanup-intent",
+            "before-cleanup-foreign-staging",
+            "before-cleanup-foreign-witness",
+            "after",
+            "recorded",
+            "replaced-target",
+            "edited-target",
+            "missing-intent",
+            "altered-binding",
+            "replaced-witness",
+            "changed-request",
+            "changed-authorization",
+            "changed-policy",
+        ] {
+            let unwritten_cleanup = case.starts_with("before-cleanup-");
+            let restartable_cleanup = matches!(
+                case,
+                "before-cleanup-staging" | "before-cleanup-witness" | "before-cleanup-intent"
+            );
+            let positive =
+                matches!(case, "normal" | "before" | "after" | "recorded") || restartable_cleanup;
+            let fixture = tempfile::tempdir().unwrap();
+            let root = fixture.path();
+            let invoke = |phase: &str, boundary: Option<&str>| {
+                let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+                command
+                    .env_clear()
+                    .envs(std::env::vars_os().filter(|(key, _)| {
+                        !key.to_string_lossy().starts_with("BROWNIE_")
+                            && !key.to_string_lossy().starts_with("CODEX_R05_2_")
+                    }));
+                command
+                    .args([
+                        "--exact",
+                        "tests::r05_2_apply_write_record_process_exit_probe",
+                        "--nocapture",
+                    ])
+                    .env("CODEX_R05_2_ROOT", root)
+                    .env("CODEX_R05_2_PHASE", phase);
+                if let Some(boundary) = boundary {
+                    command.env("CODEX_R05_2_EXIT", boundary);
+                }
+                command.output().unwrap()
+            };
+            let boundary = match case {
+                "normal" => None,
+                "before" => Some("before"),
+                _ if unwritten_cleanup => Some("before"),
+                "recorded" => Some("recorded"),
+                _ => Some("after"),
+            };
+            let setup = invoke("setup", boundary);
+            assert_eq!(
+                setup.status.code(),
+                Some(match boundary {
+                    None => 0,
+                    Some("before") => 85,
+                    Some("recorded") => 87,
+                    _ => 86,
+                }),
+                "{case}: {}",
+                String::from_utf8_lossy(&setup.stderr)
+            );
+            let target = root.join("README.md");
+            let request: Value =
+                serde_json::from_slice(&std::fs::read(root.join("request.json")).unwrap()).unwrap();
+            let run_dir = root
+                .join(".brownie/runs")
+                .join(request["params"]["run_id"].as_str().unwrap());
+            let intent_path = run_dir.join(format!(
+                "apply-intent-{}.json",
+                hex_sha256(
+                    request["params"]["proposal_id"]
+                        .as_str()
+                        .unwrap()
+                        .as_bytes()
+                )
+            ));
+            if unwritten_cleanup {
+                let intent: Value =
+                    serde_json::from_slice(&std::fs::read(&intent_path).unwrap()).unwrap();
+                let staging = root.join(intent["staging"].as_str().unwrap());
+                let witness = root.join(intent["witness"].as_str().unwrap());
+                if restartable_cleanup {
+                    std::fs::remove_file(&staging).unwrap();
+                    if case != "before-cleanup-staging" {
+                        std::fs::remove_file(&witness).unwrap();
+                    }
+                    if case == "before-cleanup-intent" {
+                        std::fs::remove_file(&intent_path).unwrap();
+                    }
+                } else {
+                    let changed = if case == "before-cleanup-foreign-staging" {
+                        &staging
+                    } else {
+                        &witness
+                    };
+                    let replacement = root.join("foreign-temporary");
+                    std::fs::write(&replacement, std::fs::read(changed).unwrap()).unwrap();
+                    std::fs::rename(&replacement, changed).unwrap();
+                }
+            } else if !positive {
+                let mut intent: Value =
+                    serde_json::from_slice(&std::fs::read(&intent_path).unwrap()).unwrap();
+                let witness = root.join(intent["witness"].as_str().unwrap());
+                match case {
+                    "replaced-target" => {
+                        let tmp = root.join("external");
+                        std::fs::write(&tmp, std::fs::read(&target).unwrap()).unwrap();
+                        std::fs::rename(tmp, &target).unwrap();
+                    }
+                    "edited-target" => std::fs::write(&target, "external change").unwrap(),
+                    "missing-intent" => std::fs::remove_file(&intent_path).unwrap(),
+                    "altered-binding" => {
+                        intent["binding"] = json!("invalid");
+                        std::fs::write(&intent_path, serde_json::to_vec(&intent).unwrap()).unwrap();
+                    }
+                    "replaced-witness" => {
+                        let tmp = root.join("external");
+                        std::fs::write(&tmp, std::fs::read(&witness).unwrap()).unwrap();
+                        std::fs::rename(tmp, witness).unwrap();
+                    }
+                    "changed-authorization" => {
+                        let mut changed = request.clone();
+                        changed["params"]["authorize"] = json!(false);
+                        std::fs::write(
+                            root.join("request.json"),
+                            serde_json::to_vec(&changed).unwrap(),
+                        )
+                        .unwrap();
+                    }
+                    "changed-policy" => {
+                        let ledger = run_dir.join("ledger.jsonl");
+                        let text = std::fs::read_to_string(&ledger).unwrap();
+                        let mut events: Vec<Value> = text
+                            .lines()
+                            .map(|line| serde_json::from_str(line).unwrap())
+                            .collect();
+                        let policy = events
+                            .iter_mut()
+                            .rev()
+                            .find(|event| event["kind"] == "ModeResolved")
+                            .unwrap();
+                        policy["payload"]["permissions"]["workspace_write"] = json!(false);
+                        let text = events
+                            .iter()
+                            .map(|event| serde_json::to_string(event).unwrap() + "\n")
+                            .collect::<String>();
+                        std::fs::write(ledger, text).unwrap();
+                    }
+                    "changed-request" => {
+                        let mut request = request.clone();
+                        request["params"]["replacement_content"] = json!("different request");
+                        std::fs::write(
+                            root.join("request.json"),
+                            serde_json::to_vec(&request).unwrap(),
+                        )
+                        .unwrap();
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            let before_retry = std::fs::metadata(&target).unwrap().modified().unwrap();
+            for phase in ["retry1", "retry2"] {
+                let retry = invoke(phase, None);
+                assert!(
+                    retry.status.success(),
+                    "{case}: {}",
+                    String::from_utf8_lossy(&retry.stderr)
+                );
+            }
+            let ledger = std::fs::read_to_string(run_dir.join("ledger.jsonl")).unwrap();
+            let applied = ledger
+                .lines()
+                .map(|s| serde_json::from_str::<Value>(s).unwrap())
+                .filter(|v| {
+                    v["kind"] == "WorkspacePatchApplyResultRecorded"
+                        && v["payload"]["apply_status"] == "Applied"
+                })
+                .count();
+            assert_eq!(applied, usize::from(positive), "{case}");
+            if case != "before" && !restartable_cleanup {
+                assert_eq!(
+                    std::fs::metadata(&target).unwrap().modified().unwrap(),
+                    before_retry,
+                    "{case}: unexpected second write"
+                );
+            }
+            assert!(
+                !ledger.contains("new README content"),
+                "{case}: raw content in ledger"
+            );
+            if unwritten_cleanup && !restartable_cleanup {
+                let intent: Value =
+                    serde_json::from_slice(&std::fs::read(&intent_path).unwrap()).unwrap();
+                for key in ["staging", "witness"] {
+                    assert!(root.join(intent[key].as_str().unwrap()).exists(), "{case}");
+                }
+            }
+            if positive {
+                assert_eq!(
+                    std::fs::read_to_string(&target).unwrap(),
+                    "new README content"
+                );
+                assert!(!intent_path.exists(), "{case}: intent not cleaned");
+                assert!(
+                    !std::fs::read_dir(root).unwrap().any(|entry| entry
+                        .unwrap()
+                        .file_name()
+                        .to_string_lossy()
+                        .contains(".tmp")),
+                    "{case}: temporary material retained"
+                );
+            }
+        }
+    }
+
     #[test]
     fn proposal_apply_replaces_existing_file_after_approval_and_current_hash() {
         let _guard = lock_env();

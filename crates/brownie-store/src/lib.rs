@@ -152,6 +152,40 @@ impl BrownieStore {
         &self.task_store
     }
 
+    /// Serialize proposal validation, mutation and result persistence in this store.
+    /// Keep the lock inode: unlinking it could let a second process lock a new file.
+    /// Kernel ownership is released even if the holder exits without unwinding.
+    pub fn with_workspace_apply_lock<T>(&self, action: impl FnOnce() -> T) -> Result<T> {
+        let directory = self.workspace_state_dir();
+        fs::create_dir_all(&directory)
+            .context("failed to create workspace apply lock directory")?;
+        let path = directory.join("workspace-apply.lock");
+        if let Ok(metadata) = fs::symlink_metadata(&path) {
+            if !metadata.file_type().is_file() {
+                bail!("workspace apply lock must be a regular file");
+            }
+        }
+        let mut options = OpenOptions::new();
+        options.read(true).write(true).create(true).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options
+                .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+                .mode(0o600);
+        }
+        let file = options
+            .open(&path)
+            .context("failed to open workspace apply lock")?;
+        if !file.metadata()?.is_file() {
+            bail!("workspace apply lock must be a regular file");
+        }
+        file.try_lock_exclusive()
+            .context("another workspace apply is in progress")?;
+        // File's drop releases the OS lock on success, error or panic.
+        Ok(action())
+    }
+
     pub fn ensure_durable_schema(&self) -> Result<DurableStoreSchemaManifest> {
         self.task_store.ensure_durable_schema()
     }
@@ -11612,6 +11646,83 @@ fn timestamp() -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workspace_apply_lock_process_probe() {
+        let Some(root) = std::env::var_os("BROWNIE_APPLY_LOCK_PROBE_ROOT") else {
+            return;
+        };
+        BrownieStore::new(PathBuf::from(root))
+            .with_workspace_apply_lock(|| {
+                // Exit without dropping the File to exercise kernel release.
+                std::process::exit(86);
+            })
+            .expect("child lock");
+    }
+
+    #[test]
+    fn workspace_apply_lock_excludes_other_handles_and_recovers_after_process_exit() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = BrownieStore::new(temp.path());
+        store
+            .with_workspace_apply_lock(|| {
+                let other = BrownieStore::new(temp.path());
+                assert!(other
+                    .with_workspace_apply_lock(|| panic!("concurrent mutation"))
+                    .is_err());
+                let child = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "tests::workspace_apply_lock_process_probe",
+                        "--nocapture",
+                    ])
+                    .env("BROWNIE_APPLY_LOCK_PROBE_ROOT", temp.path())
+                    .output()
+                    .unwrap();
+                assert!(!child.status.success());
+                assert_ne!(
+                    child.status.code(),
+                    Some(86),
+                    "second process entered critical section"
+                );
+                assert!(String::from_utf8_lossy(&child.stderr).contains("child lock"));
+            })
+            .unwrap();
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::workspace_apply_lock_process_probe",
+                "--nocapture",
+            ])
+            .env("BROWNIE_APPLY_LOCK_PROBE_ROOT", temp.path())
+            .output()
+            .unwrap();
+        assert_eq!(child.status.code(), Some(86));
+        assert_eq!(store.with_workspace_apply_lock(|| 42).unwrap(), 42);
+        assert!(store
+            .workspace_state_dir()
+            .join("workspace-apply.lock")
+            .is_file());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_apply_lock_rejects_symlink_without_touching_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = BrownieStore::new(temp.path());
+        fs::create_dir_all(store.workspace_state_dir()).unwrap();
+        let target = temp.path().join("unrelated");
+        fs::write(&target, b"unchanged").unwrap();
+        std::os::unix::fs::symlink(
+            &target,
+            store.workspace_state_dir().join("workspace-apply.lock"),
+        )
+        .unwrap();
+        assert!(store
+            .with_workspace_apply_lock(|| panic!("must not run"))
+            .is_err());
+        assert_eq!(fs::read(target).unwrap(), b"unchanged");
+    }
 
     #[cfg(unix)]
     #[test]

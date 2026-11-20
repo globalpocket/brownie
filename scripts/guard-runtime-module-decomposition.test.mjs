@@ -13,26 +13,9 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 
 function copyFixture() {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-module-decomposition-'));
-  for (const relativePath of [
-    'docs/architecture/runtime-module-decomposition-assessment.json',
-    'crates/brownie-runtime/src/lib.rs',
-    'crates/brownie-runtime/src/task_progress.rs',
-    'crates/brownie-runtime/src/controlled_tool_execution.rs',
-    'crates/brownie-runtime/src/modepack.rs',
-    'crates/brownie-runtime/src/product_completion.rs',
-    'crates/brownie-runtime/src/product_continuation.rs',
-    'crates/brownie-runtime/src/proposal_apply.rs',
-    'crates/brownie-runtime/src/headless_continue.rs',
-    'crates/brownie-runtime/src/headless_journey.rs',
-    'crates/brownie-runtime/src/task_admission.rs',
-    'crates/brownie-runtime/src/task_progress.rs',
-    'crates/brownie-runtime/src/verification_recovery.rs',
-    'crates/brownie-runtime/src/llm_provider.rs',
-    'crates/brownie-runtime/src/codebase_index.rs',
-    'crates/brownie-runtime/src/objective_proposal.rs',
-    'crates/brownie-runtime/src/objective_verification.rs',
-    'crates/brownie-runtime/src/mcp_client.rs',
-  ]) {
+  const assessmentPath = 'docs/architecture/runtime-module-decomposition-assessment.json';
+  const assessment = JSON.parse(fs.readFileSync(path.join(repoRoot, assessmentPath), 'utf8'));
+  for (const relativePath of [assessmentPath, ...assessment.source_paths]) {
     const target = path.join(temp, relativePath);
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.copyFileSync(path.join(repoRoot, relativePath), target);
