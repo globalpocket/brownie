@@ -2853,6 +2853,7 @@ pub(super) fn todo_md_workspace_write_rejection_reason(
                 "task_execution_constraint_denied: workspace write exceeds admitted restrictions",
             );
         }
+        return None;
     }
     let path = input.get("path").and_then(Value::as_str)?;
     if selected_todo_forbids_workspace_write_path(&record.goal, path) {
@@ -2914,6 +2915,9 @@ pub(super) fn normalize_todo_md_workspace_write_input(
     record: &brownie_protocol::TaskRecord,
     input: &Value,
 ) -> Value {
+    if record.execution_constraints.is_some() {
+        return input.clone();
+    }
     let Some(path) = input.get("path").and_then(Value::as_str) else {
         return input.clone();
     };
@@ -6581,6 +6585,76 @@ mod mcp_approval_lock_tests {
             .unwrap()
             .contains("budget exhausted"));
         }
+    }
+
+    #[test]
+    fn explicit_write_policy_preserves_input_without_goal_derived_queue_rewriting() {
+        for path in ["notes.txt", ".brownie/todo.md"] {
+            let mut record = test_task_record();
+            record.goal = format!("\n## Selected TODO\n\n- [ ] parent: Patch only `other.txt`.\n  Forbidden changes: do not edit `{path}`.\n");
+            record.execution_constraints = Some(brownie_protocol::TaskExecutionConstraints {
+                write_paths: Some(vec![path.into()]),
+                write_operations: Some(vec!["patch_file".into()]),
+                ..Default::default()
+            });
+            let input = json!({"path":path,"operation":"patch_file","old_text":"old","new_text":"- [ ] child: Patch only `notes.txt`; Source TODO: parent; Verification: run `cargo check`."});
+            assert!(
+                todo_md_workspace_write_rejection_reason(&record, &input).is_none(),
+                "typed scope must not be replaced by goal text"
+            );
+            assert_eq!(
+                normalize_todo_md_workspace_write_input(&record, &input),
+                input,
+                "the external controller owns project-specific normalization"
+            );
+            assert!(todo_md_workspace_write_rejection_reason(
+                &record,
+                &json!({"path":"outside.txt","operation":"patch_file"})
+            )
+            .is_some());
+        }
+    }
+
+    #[test]
+    fn explicit_queue_patch_does_not_invent_an_occurrence_from_goal_text() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = BrownieStore::new(temp.path());
+        std::fs::create_dir(temp.path().join(".brownie")).unwrap();
+        let block = "- [ ] duplicate: Patch only `notes.txt`\n";
+        let original = block.repeat(2);
+        std::fs::write(temp.path().join(".brownie/todo.md"), &original).unwrap();
+        let mut record = test_task_record();
+        record.goal =
+            "Repair .brownie/todo.md: duplicate unchecked TODO id appears 2 times.".into();
+        record.execution_constraints = Some(brownie_protocol::TaskExecutionConstraints {
+            write_paths: Some(vec![".brownie/todo.md".into()]),
+            write_operations: Some(vec!["patch_file".into()]),
+            requires_workspace_write_proposal: true,
+            ..Default::default()
+        });
+        let intent = json!({"tool_requests":[{"tool_id":WORKSPACE_WRITE_TOOL_ID,"reason":"remove duplicate","input":{"path":".brownie/todo.md","operation":"patch_file","old_text":block,"new_text":""}}]});
+        let assistant = format!("```brownie-tool-intent\n{intent}\n```");
+        handle_approved_workspace_intents(&store, &record, &write_policy(), &assistant).unwrap();
+        let events = store.tasks().read_ledger_events(&record.run_id).unwrap();
+        let proposal = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::WorkspacePatchProposed)
+            .expect("proposal validation recorded")
+            .payload
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            proposal["validation_status"], "Invalid",
+            "ambiguous input cannot be normalized into valid authority"
+        );
+        assert!(proposal["validation_reason"]
+            .as_str()
+            .unwrap()
+            .contains("more than once"));
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join(".brownie/todo.md")).unwrap(),
+            original
+        );
     }
 
     #[test]

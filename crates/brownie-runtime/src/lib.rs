@@ -14147,12 +14147,14 @@ fn append_workspace_patch_proposal(
         return Ok(());
     }
     if operation == WorkspacePatchOperation::PatchFile.as_str() {
-        proposal_input = disambiguate_workspace_patch_input_from_goal(
-            store,
-            path,
-            &proposal_input,
-            &record.goal,
-        );
+        if record.execution_constraints.is_none() {
+            proposal_input = disambiguate_workspace_patch_input_from_goal(
+                store,
+                path,
+                &proposal_input,
+                &record.goal,
+            );
+        }
         proposal_input =
             normalize_json_line_block_patch_input_from_target(store, path, &proposal_input);
     }
