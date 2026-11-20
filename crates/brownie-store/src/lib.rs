@@ -4996,7 +4996,7 @@ impl TaskStore {
         &self,
         session_id: &str,
     ) -> Result<Option<HeadlessRunSessionCheckpoint>> {
-        self.ensure_durable_schema()?;
+        self.ensure_schema_for_read()?;
         let path = self.headless_run_session_current_path(session_id);
         match fs::read_to_string(&path) {
             Ok(body) => serde_json::from_str(&body)
@@ -5011,6 +5011,7 @@ impl TaskStore {
         &self,
         checkpoint: &HeadlessRunSessionCheckpoint,
     ) -> Result<()> {
+        self.ensure_durable_schema()?;
         let current_path = self.headless_run_session_current_path(&checkpoint.session_id);
         if let Some(existing) = self.read_headless_run_session_checkpoint(&checkpoint.session_id)? {
             if existing == *checkpoint {
@@ -5092,7 +5093,7 @@ impl TaskStore {
     pub fn list_headless_journey_start_checkpoints(
         &self,
     ) -> Result<Vec<HeadlessJourneyStartCheckpoint>> {
-        self.ensure_durable_schema()?;
+        self.ensure_schema_for_read()?;
         let dir = self.headless_journeys_dir();
         if !dir.exists() {
             return Ok(Vec::new());
@@ -11696,6 +11697,63 @@ mod tests {
     use super::*;
 
     type Snapshot = std::collections::BTreeMap<PathBuf, (bool, Vec<u8>, std::time::SystemTime)>;
+    #[test]
+    fn inspection_checkpoint_reads_preserve_state_and_refuse_session_writes() {
+        let checkpoint: HeadlessRunSessionCheckpoint = serde_json::from_value(serde_json::json!({
+            "session_id":"session_fixture", "advance_id":"advance_fixture", "session_sequence":1,
+            "result":{
+                "status":"no_eligible_task", "session_id":"session_fixture", "advance_id":"advance_fixture",
+                "session_sequence":1, "replayed":false,
+                "start_progress":{"progress_fingerprint":"fixture", "aggregate_sequence":0},
+                "max_steps":1, "step_count":0, "executed_count":0, "replayed_count":0,
+                "stop_reason":"no eligible task", "checkpoint_fingerprint":"fixture",
+                "steps":[], "next_action":"inspect"
+            }
+        })).unwrap();
+        let journey: HeadlessJourneyStartCheckpoint = serde_json::from_value(serde_json::json!({
+            "journey_id":"journey_fixture", "session_id":"session_fixture", "drive_id":"drive_fixture",
+            "task_id":"task_fixture", "run_id":"run_fixture", "task_start_fingerprint":"fixture",
+            "start_progress":{"progress_fingerprint":"fixture", "aggregate_sequence":0},
+            "journey_fingerprint":"fixture"
+        })).unwrap();
+        for initialized in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let mut store = TaskStore::new(temp.path());
+            if initialized {
+                store
+                    .write_headless_run_session_checkpoint(&checkpoint)
+                    .unwrap();
+                store
+                    .write_headless_journey_start_checkpoint(&journey)
+                    .unwrap();
+            }
+            store.inspection_only = true;
+            let before = inspection_snapshot(temp.path());
+            assert_eq!(
+                store
+                    .read_headless_run_session_checkpoint("session_fixture")
+                    .unwrap(),
+                initialized.then(|| checkpoint.clone())
+            );
+            assert_eq!(
+                store.list_headless_journey_start_checkpoints().unwrap(),
+                if initialized {
+                    vec![journey.clone()]
+                } else {
+                    vec![]
+                }
+            );
+            let error = store
+                .write_headless_run_session_checkpoint(&checkpoint)
+                .unwrap_err();
+            assert!(
+                error.to_string().contains("read-only inspection"),
+                "{error}"
+            );
+            assert_eq!(inspection_snapshot(temp.path()), before);
+        }
+    }
+
     fn inspection_snapshot(root: &Path) -> Snapshot {
         fn walk(path: &Path, rows: &mut Snapshot) {
             let metadata = fs::symlink_metadata(path).unwrap();

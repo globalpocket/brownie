@@ -8,7 +8,7 @@ pub(super) fn handle_task_list(id: Value, params: Option<Value>) -> JsonRpcRespo
         },
         None => None,
     };
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
