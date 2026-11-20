@@ -3,6 +3,19 @@ import assert from 'node:assert/strict';
 import { compileTaskConstraints } from './phase-loop-task-constraints.mjs';
 
 const prompt = (todo, prefix = '') => `${prefix}\n## Selected TODO\n\n${todo}\n\n## TODO Queue Snapshot\n- [ ] other: Patch only \`outside.txt\`: Unselected.\n`;
+test('external controller queue never becomes a Runtime workspace capability', () => {
+  const input = prompt('- [ ] task: Patch only `notes.txt`: Implement the selected change.');
+  const constraints = compileTaskConstraints(input, {queuePath: null});
+  assert.deepEqual(constraints.write_paths, ['notes.txt']);
+  assert.deepEqual(constraints.denied_write_paths, []);
+  assert.equal(JSON.stringify(constraints).includes('null'), false);
+  for (const state of ['decompose_todo', 'todo_queue_repair']) {
+    assert.throws(() => compileTaskConstraints(input, {state, queuePath: null}), /controller-owned replan/u);
+  }
+  for (const queuePath of ['../queue.md', '/tmp/queue.md']) {
+    assert.throws(() => compileTaskConstraints(input, {queuePath}), /exact normalized/u);
+  }
+});
 test('compiles every declared target without admitting queue snapshot paths', () => {
   const result = compileTaskConstraints(prompt('- [ ] independent: Patch only `notes.txt`, `src/app.rs`: Update output.'));
   assert.deepEqual(result.write_paths, ['notes.txt', 'src/app.rs']);

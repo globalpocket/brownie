@@ -8,6 +8,33 @@ import { spawnSync } from 'node:child_process';
 import { validateTodoDecompositionText } from './guard-todo-decomposition.mjs';
 import { validateQueueApplyCandidate, validateDecompositionTransition, validateRuntimeProposalRequest, validateQueueRepairTransition, validateDecompositionLeaves, uncheckedTodoBlocks } from './repair-todo-decomposition.mjs';
 
+test('external controller queue admits only the bound workspace proposal without mutation', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-external-queue-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const target = path.join(root, 'notes.txt');
+  fs.writeFileSync(target, 'original');
+  const digest = value => createHash('sha256').update(value).digest('hex');
+  const selected = '- [ ] selected: Patch only `notes.txt`: Update the selected document.';
+  const metadata = { selected_todo_text: selected, selected_todo_sha256: digest(selected),
+    bdk_state: 'implementation', queue_relative_path: null };
+  const request = {
+    schema_version: 1, context: { metadata, metadata_sha256: `sha256:${digest(JSON.stringify(metadata))}` },
+    proposal: { proposal: { proposal_id: 'p1', path: 'notes.txt', operation: 'patch_file' } },
+    apply_params: { proposal_id: 'p1', run_id: 'r1', expected_target_sha256: `sha256:${digest('original')}`,
+      patch_hunks: [{ old_text: 'original', new_text: 'updated' }] }
+  };
+  const bytes = Buffer.from(JSON.stringify(request));
+  assert.deepEqual(validateRuntimeProposalRequest(bytes, root), {
+    schema_version: 1, valid: true, applied: false, request_sha256: `sha256:${digest(bytes)}`
+  });
+  for (const targetPath of ['.brownie/todo.md', '../queue.md', '/tmp/queue.md', 'unrelated.txt']) {
+    request.proposal.proposal.path = targetPath;
+    assert.throws(() => validateRuntimeProposalRequest(Buffer.from(JSON.stringify(request)), root), /outside bound controller policy/u);
+  }
+  assert.equal(fs.readFileSync(target, 'utf8'), 'original');
+  assert.deepEqual(fs.readdirSync(root), ['notes.txt']);
+});
+
 test('Runtime proposal endpoint rejects decomposition of an unrelated parent without writing', t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-bound-parent-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

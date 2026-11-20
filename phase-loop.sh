@@ -16154,7 +16154,11 @@ metadata = {
     "llm_route": llm_route,
     "context_hints": context_hints,
     "todo_path": str(todo_path),
-    "queue_relative_path": todo_path.resolve().relative_to(workspace_root_path.resolve()).as_posix(),
+    # An external controller queue is not a Runtime workspace capability.
+    "queue_relative_path": (
+        todo_path.resolve().relative_to(workspace_root_path.resolve()).as_posix()
+        if todo_path.resolve().is_relative_to(workspace_root_path.resolve()) else None
+    ),
     "todo_sha256": sha256_text(todo_text),
     "todo_line_count": todo_line_count,
     "todo_snapshot_lines": min(todo_line_count, todo_snapshot_lines),
@@ -16177,11 +16181,7 @@ PY
   then
     return 1
   fi
-  local constraints_path="${output_path%.prompt.md}.constraints.json"
-  if ! node "$ROOT_DIR/scripts/phase-loop-task-constraints.mjs" "$output_path" "$meta_path" "$constraints_path"; then
-    return 1
-  fi
-  chmod 600 "$output_path" "$meta_path" "$constraints_path"
+  chmod 600 "$output_path" "$meta_path"
   sync_parent_dir "$RUN_DIR"
   retire_old_prompt_artifacts
 }
@@ -20609,6 +20609,19 @@ PY
         write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"objective_apply_resume_scope_malformed","owner_blocked":true}'
         return 78
       fi
+    fi
+  fi
+  # Controller-owned queue repairs above may finish without any Runtime task.
+  # Compile fresh execution authority only after those replan transitions and
+  # the final claim/prompt refresh; resumes retain their original bound policy.
+  if [ "$use_resume" -ne 1 ]; then
+    if ! node "$ROOT_DIR/scripts/phase-loop-task-constraints.mjs" "$effective_prompt" \
+        "${effective_prompt%.prompt.md}.prompt.meta.json" "${effective_prompt%.prompt.md}.constraints.json"; then
+      detail="Selected TODO has no valid bounded Runtime execution constraints; re-estimate or split its scope before dispatch."
+      printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+      write_status "blocked" "$detail" "$run_stamp" "74" "${CONSECUTIVE_FAILURES:-0}"
+      write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"execution_constraint_compilation_failed"}'
+      return 74
     fi
   fi
   # Runtime uses its process status to distinguish a failed apply from a

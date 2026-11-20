@@ -800,10 +800,19 @@ if [ "${1:-}" != "--json" ]; then
   echo "unexpected fake brownie invocation: $*" >&2
   exit 64
 fi
+if [ "${2:-}" != "--proposal-validator-file" ] || [ ! -f "${3:-}" ]; then
+  echo "missing bound proposal validator" >&2
+  exit 64
+fi
+set -- "$1" "${@:4}"
 case "${2:-}" in
   run)
     if [ "${3:-}" != "--file" ] || [ -z "${4:-}" ]; then
       echo "unexpected fake brownie run invocation: $*" >&2
+      exit 64
+    fi
+    if [ "${5:-}" != "--constraints-file" ] || [ ! -f "${6:-}" ]; then
+      echo "missing explicit execution constraints" >&2
       exit 64
     fi
     ;;
@@ -1315,6 +1324,11 @@ fake_brownie_completed_tracked_workspace_change="$(mktemp)"
 cat > "$fake_brownie_completed_tracked_workspace_change" <<'SH'
 #!/usr/bin/env bash
 set -eu
+if [ "${2:-}" != "--proposal-validator-file" ] || [ ! -f "${3:-}" ]; then
+  echo "missing bound proposal validator" >&2
+  exit 64
+fi
+set -- "$1" "${@:4}"
 if [ "${2:-}" = "run" ]; then
   printf 'completed workspace change from Brownie phase-loop\n' > README.md
 fi
@@ -1444,6 +1458,11 @@ fake_brownie_tracked_workspace_change="$(mktemp)"
 cat > "$fake_brownie_tracked_workspace_change" <<'SH'
 #!/usr/bin/env bash
 set -eu
+if [ "${2:-}" != "--proposal-validator-file" ] || [ ! -f "${3:-}" ]; then
+  echo "missing bound proposal validator" >&2
+  exit 64
+fi
+set -- "$1" "${@:4}"
 if [ "${2:-}" = "run" ]; then
   printf 'changed by brownie phase-loop\n' > README.md
 fi
@@ -1563,7 +1582,7 @@ state_with_claim="$(mktemp -d)"
 prompt_with_claim="$(mktemp)"
 todo_with_claim="$(mktemp)"
 printf 'base prompt\n' > "$prompt_with_claim"
-printf -- '- [ ] B-01: durable claim task\n  with detail\n  Files: `scripts/release-runtime-operational-evidence.mjs`, `docs/architecture/local-release-targets.example.json`.\n- [ ] B-02: next task\n' > "$todo_with_claim"
+printf -- '- [ ] B-01: Create only `scripts/release-runtime-operational-evidence.mjs` and `docs/architecture/local-release-targets.example.json` for the durable claim task.\n  with detail\n  Files: `scripts/release-runtime-operational-evidence.mjs`, `docs/architecture/local-release-targets.example.json`.\n- [ ] B-02: next task\n' > "$todo_with_claim"
 
 PHASE_LOOP_STATE_DIR="$state_with_claim" \
 PHASE_LOOP_PROMPT="$prompt_with_claim" \
@@ -1590,6 +1609,18 @@ queue_state = json.load(open(sys.argv[2], encoding="utf-8"))
 progress_state = json.load(open(sys.argv[3], encoding="utf-8"))
 prompt_meta = json.load(open(sys.argv[5], encoding="utf-8"))
 prompt_text = open(sys.argv[4], encoding="utf-8").read()
+constraints_path = sys.argv[4].removesuffix(".prompt.md") + ".constraints.json"
+constraints = json.load(open(constraints_path, encoding="utf-8"))
+validator = json.load(open(constraints_path + ".validator.json", encoding="utf-8"))
+assert constraints["write_paths"] == [
+    "scripts/release-runtime-operational-evidence.mjs",
+    "docs/architecture/local-release-targets.example.json",
+], constraints
+assert constraints["write_operations"] == ["create_file"], constraints
+assert constraints["denied_write_paths"] == [], constraints
+assert prompt_meta["queue_relative_path"] is None, prompt_meta
+assert validator["context"]["metadata"]["queue_relative_path"] is None, validator
+assert validator["context"]["metadata"]["selected_todo_sha256"] == claim["selected_todo_sha256"], validator
 mode = stat.S_IMODE(os.stat(path).st_mode)
 queue_mode = stat.S_IMODE(os.stat(sys.argv[2]).st_mode)
 progress_mode = stat.S_IMODE(os.stat(sys.argv[3]).st_mode)
@@ -1598,7 +1629,7 @@ prompt_meta_mode = stat.S_IMODE(os.stat(sys.argv[5]).st_mode)
 history = [entry["status"] for entry in claim["status_history"]]
 assert claim["status"] == "in_progress", claim
 assert history[:2] == ["claimed", "in_progress"], claim
-assert claim["selected_todo"].startswith("- [ ] B-01: durable claim task"), claim
+assert claim["selected_todo"].startswith("- [ ] B-01: Create only `scripts/release-runtime-operational-evidence.mjs` and `docs/architecture/local-release-targets.example.json` for the durable claim task."), claim
 assert claim["queue_generation"] == 1, claim
 assert claim["queue_fingerprint"] == queue_state["fingerprint"], (claim, queue_state)
 assert queue_state["generation"] == 1, queue_state
@@ -1631,7 +1662,7 @@ state_with_blocked="$(mktemp -d)"
 prompt_with_blocked="$(mktemp)"
 todo_with_blocked="$(mktemp)"
 printf 'base prompt\n' > "$prompt_with_blocked"
-printf -- '- [ ] R-09: blocked boundary task\n' > "$todo_with_blocked"
+printf -- '- [ ] R-09: Create only `blocked-boundary.txt` for the blocked boundary task.\n' > "$todo_with_blocked"
 
 PHASE_LOOP_STATE_DIR="$state_with_blocked" \
 PHASE_LOOP_PROMPT="$prompt_with_blocked" \
@@ -1661,7 +1692,7 @@ todo_terminal_no_eligible="$(mktemp)"
 todo_breakdown_terminal_no_eligible="$(mktemp)"
 root_breakdown_before="$(shasum "$REPO_ROOT/.brownie/todo-breakdown.md" | awk '{print $1}')"
 printf 'base prompt\n' > "$prompt_terminal_no_eligible"
-printf -- '- [ ] E-15a-redaction-guard: implement concrete guard task\n' > "$todo_terminal_no_eligible"
+printf -- '- [ ] E-15a-redaction-guard: Create only `scripts/redaction-guard.mjs` to implement the concrete guard task.\n' > "$todo_terminal_no_eligible"
 
 set +e
 PHASE_LOOP_STATE_DIR="$state_terminal_no_eligible" \
@@ -3468,7 +3499,7 @@ queue_state_with_claim="$(mktemp -d)"
 queue_prompt_with_claim="$(mktemp)"
 queue_todo_with_claim="$(mktemp)"
 printf 'base prompt\n' > "$queue_prompt_with_claim"
-printf -- '- [ ] B-01: durable claim task\n  with detail\n  Files: \`scripts/release-runtime-operational-evidence.mjs\`, \`docs/architecture/local-release-targets.example.json\`.\n- [ ] B-02: next task\n' > "$queue_todo_with_claim"
+printf -- '- [ ] B-01: Create only `scripts/release-runtime-operational-evidence.mjs` and `docs/architecture/local-release-targets.example.json` for the durable claim task.\n  with detail\n  Files: \`scripts/release-runtime-operational-evidence.mjs\`, \`docs/architecture/local-release-targets.example.json\`.\n- [ ] B-02: next task\n' > "$queue_todo_with_claim"
 
 PHASE_LOOP_STATE_DIR="$queue_state_with_claim" \
 PHASE_LOOP_PROMPT="$queue_prompt_with_claim" \
@@ -3484,7 +3515,7 @@ queue_state_with_blocked="$(mktemp -d)"
 queue_prompt_with_blocked="$(mktemp)"
 queue_todo_with_blocked="$(mktemp)"
 printf 'base prompt\n' > "$queue_prompt_with_blocked"
-printf -- '- [ ] R-09: blocked boundary task\n' > "$queue_todo_with_blocked"
+printf -- '- [ ] R-09: Create only `blocked-boundary.txt` for the blocked boundary task.\n' > "$queue_todo_with_blocked"
 
 PHASE_LOOP_STATE_DIR="$queue_state_with_blocked" \
 PHASE_LOOP_PROMPT="$queue_prompt_with_blocked" \
@@ -3638,7 +3669,7 @@ printf '%s\n' "$*" >> "${PHASE_LOOP_LIVENESS_ARGV:?}"
 if [[ " $* " == *" resume "* ]]; then
   # The first resume consumes the authorized apply.  A later continuation is
   # verification-only and must not repeat that workspace write.
-  if [ "$(grep -c -- '--json resume' "${PHASE_LOOP_LIVENESS_ARGV:?}")" -gt 1 ]; then
+  if [ "$(grep -c -- ' resume' "${PHASE_LOOP_LIVENESS_ARGV:?}")" -gt 1 ]; then
     cat <<'JSON'
 {
   "command": "resume",
@@ -3810,6 +3841,19 @@ progress = json.load(open(sys.argv[1], encoding="utf-8"))
 projection = progress["progress_projection"]
 readme = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
 argv = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8")
+# Validate the bound global option before comparing command-specific routing.
+import shlex
+argv_lines = argv if isinstance(argv, list) else argv.splitlines()
+normalized_argv = []
+validator_paths = set()
+for line in argv_lines:
+    args = shlex.split(line)
+    assert args[:2] == ["--json", "--proposal-validator-file"], args
+    assert pathlib.Path(args[2]).is_file(), args
+    validator_paths.add(args[2])
+    normalized_argv.append(" ".join([args[0], *args[3:]]))
+assert len(validator_paths) == 1, validator_paths
+argv = "\n".join(normalized_argv)
 claim = json.load(open(sys.argv[4], encoding="utf-8"))
 stdout = json.loads(pathlib.Path(progress["stdout_log"]).read_text(encoding="utf-8"))
 payload = stdout["resume"]
@@ -3906,6 +3950,19 @@ import sys
 progress = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 readme = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
 argv = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8").splitlines()
+# Validate the bound global option before comparing command-specific routing.
+import shlex
+argv_lines = argv if isinstance(argv, list) else argv.splitlines()
+normalized_argv = []
+validator_paths = set()
+for line in argv_lines:
+    args = shlex.split(line)
+    assert args[:2] == ["--json", "--proposal-validator-file"], args
+    assert pathlib.Path(args[2]).is_file(), args
+    validator_paths.add(args[2])
+    normalized_argv.append(" ".join([args[0], *args[3:]]))
+assert len(validator_paths) == 1, validator_paths
+argv = normalized_argv
 stdout = json.loads(pathlib.Path(progress["stdout_log"]).read_text(encoding="utf-8"))
 payload = stdout["resume"]
 assert progress["classification"] == "continuation_required", progress
@@ -4006,6 +4063,19 @@ import sys
 
 status = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 argv = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8").splitlines()
+# Validate the bound global option before comparing command-specific routing.
+import shlex
+argv_lines = argv if isinstance(argv, list) else argv.splitlines()
+normalized_argv = []
+validator_paths = set()
+for line in argv_lines:
+    args = shlex.split(line)
+    assert args[:2] == ["--json", "--proposal-validator-file"], args
+    assert pathlib.Path(args[2]).is_file(), args
+    validator_paths.add(args[2])
+    normalized_argv.append(" ".join([args[0], *args[3:]]))
+assert len(validator_paths) == 1, validator_paths
+argv = normalized_argv
 before = int(sys.argv[3])
 assert len(argv) == before + 1, argv
 assert argv[-1] == "--json resume", argv
@@ -4037,7 +4107,7 @@ test_workspace="$queue_workspace"
 queue_prompt_with_blocked="$(mktemp)"
 queue_todo_with_blocked="$(mktemp)"
 printf 'base prompt\n' > "$queue_prompt_with_blocked"
-printf -- '- [ ] R-09: blocked boundary task\n' > "$queue_todo_with_blocked"
+printf -- '- [ ] R-09: Create only `blocked-boundary.txt` for the blocked boundary task.\n' > "$queue_todo_with_blocked"
 queue_state_with_blocked="$(mktemp -d)"
 
 state_all_blocked="$(mktemp -d)"
@@ -4240,7 +4310,7 @@ assert orphan_id not in todo, todo
 assert f"Source TODO: {historical_id}." in todo, todo
 PY
 
-printf -- '- [ ] R-09: blocked boundary task\n  Extra context that changes the queue fingerprint.\n- [ ] R-10: next unblocked task\n' > "$queue_todo_with_blocked"
+printf -- '- [ ] R-09: Create only `blocked-boundary.txt` for the blocked boundary task.\n  Extra context that changes the queue fingerprint.\n- [ ] R-10: next unblocked task\n' > "$queue_todo_with_blocked"
 
 PHASE_LOOP_STATE_DIR="$queue_state_with_blocked" \
 PHASE_LOOP_PROMPT="$queue_prompt_with_blocked" \
@@ -4255,7 +4325,7 @@ import sys
 
 claim = json.load(open(sys.argv[1], encoding="utf-8"))
 assert claim["status"] == "in_progress", claim
-assert claim["selected_todo"].startswith("- [ ] R-09: blocked boundary task"), claim
+assert claim["selected_todo"].startswith("- [ ] R-09: Create only `blocked-boundary.txt` for the blocked boundary task."), claim
 PY
 fi
 
@@ -4381,7 +4451,7 @@ queue_state_with_claim="$(mktemp -d)"
 queue_prompt_with_claim="$(mktemp)"
 queue_todo_with_claim="$(mktemp)"
 printf 'base prompt\n' > "$queue_prompt_with_claim"
-printf -- '- [ ] B-01: durable claim task\n  with detail\n  Files: \`scripts/release-runtime-operational-evidence.mjs\`, \`docs/architecture/local-release-targets.example.json\`.\n- [ ] B-02: next task\n' > "$queue_todo_with_claim"
+printf -- '- [ ] B-01: Create only `scripts/release-runtime-operational-evidence.mjs` and `docs/architecture/local-release-targets.example.json` for the durable claim task.\n  with detail\n  Files: \`scripts/release-runtime-operational-evidence.mjs\`, \`docs/architecture/local-release-targets.example.json\`.\n- [ ] B-02: next task\n' > "$queue_todo_with_claim"
 
 PHASE_LOOP_STATE_DIR="$queue_state_with_claim" \
 PHASE_LOOP_PROMPT="$queue_prompt_with_claim" \
@@ -4398,12 +4468,12 @@ import sys
 
 claim = json.load(open(sys.argv[1], encoding="utf-8"))
 assert claim["status"] == "in_progress", claim
-assert claim["selected_todo"].startswith("- [ ] B-01: durable claim task"), claim
+assert claim["selected_todo"].startswith("- [ ] B-01: Create only `scripts/release-runtime-operational-evidence.mjs` and `docs/architecture/local-release-targets.example.json` for the durable claim task."), claim
 assert len(claim["status_history"]) >= 2, claim
 PY
 assert_contains "$queue_prompt_file" '## Active TODO Claim'
 assert_contains "$queue_prompt_file" 'queue_generation'
-assert_contains "$queue_prompt_file" 'B-01: durable claim task'
+assert_contains "$queue_prompt_file" 'B-01: Create only `scripts/release-runtime-operational-evidence.mjs` and `docs/architecture/local-release-targets.example.json` for the durable claim task.'
 
 state_stagnation="$(mktemp -d)"
 prompt_stagnation="$(mktemp)"
@@ -4411,14 +4481,14 @@ queue_stagnation_workspace="$(mktemp -d)"
 git -C "$queue_stagnation_workspace" init -b main >/dev/null
 mkdir -p "$queue_stagnation_workspace/.brownie"
 printf '%s\n' '{"name":"brownie-claim-smoke-stagnation-fixture","private":true,"scripts":{"guard:todo-decomposition":"node scripts/guard-todo-decomposition.mjs","phase-loop:todo-queue-integrity":"node scripts/phase-loop-todo-queue-integrity.mjs"}}' > "$queue_stagnation_workspace/package.json"
-printf '%s\n' '- [ ] B-01: stagnant task' > "$queue_stagnation_workspace/.brownie/todo.md"
+printf '%s\n' '- [ ] B-01: Create only `claim-fixture.txt` for stagnant task' > "$queue_stagnation_workspace/.brownie/todo.md"
 printf '# queue fixture breakdown\n' > "$queue_stagnation_workspace/.brownie/todo-breakdown.md"
 git -C "$queue_stagnation_workspace" add package.json .brownie/todo.md .brownie/todo-breakdown.md
 git -C "$queue_stagnation_workspace" -c user.name=Brownie -c user.email=brownie@example.invalid commit -m init >/dev/null
 todo_stagnation="$queue_stagnation_workspace/.brownie/todo.md"
 todo_breakdown_stagnation="$queue_stagnation_workspace/.brownie/todo-breakdown.md"
 printf 'base prompt\n' > "$prompt_stagnation"
-printf -- '- [ ] B-01: stagnant task\n' > "$todo_stagnation"
+printf -- '- [ ] B-01: Create only `claim-fixture.txt` for stagnant task\n' > "$todo_stagnation"
 test_workspace="$queue_stagnation_workspace"
 
 PHASE_LOOP_STATE_DIR="$state_stagnation" \
@@ -4495,7 +4565,7 @@ printf '# queue fixture breakdown\n' > "$workspace_todo_md_only/.brownie/todo-br
 git -C "$workspace_todo_md_only" add package.json .brownie/todo-breakdown.md
 git -C "$workspace_todo_md_only" -c user.name=Brownie -c user.email=brownie@example.invalid commit -m init >/dev/null
 printf 'base prompt\n' > "$prompt_todo_md_only"
-printf -- '- [ ] E-08b-next: Finish E-08b after read-budget exhaustion:\n  Source TODO: E-08b: Fail closed on supply-chain scan and network failures.\n' > "$todo_todo_md_only"
+printf -- '- [ ] E-08b-next: Patch only `package.json` after read-budget exhaustion:\n  Source TODO: E-08b: Fail closed on supply-chain scan and network failures.\n' > "$todo_todo_md_only"
 
 PHASE_LOOP_STATE_DIR="$state_todo_md_only" \
 PHASE_LOOP_PROMPT="$prompt_todo_md_only" \
@@ -5042,7 +5112,7 @@ state_truncated="$(mktemp -d)"
 prompt_truncated="$(mktemp)"
 todo_truncated="$(mktemp)"
 printf 'base line 1\nbase line 2\n' > "$prompt_truncated"
-printf -- '- [ ] B-01: truncation metadata task\n- [ ] B-02: hidden from snapshot\n' > "$todo_truncated"
+printf -- '- [ ] B-01: Create only `claim-fixture.txt` for truncation metadata task\n- [ ] B-02: hidden from snapshot\n' > "$todo_truncated"
 
 PHASE_LOOP_STATE_DIR="$state_truncated" \
 PHASE_LOOP_PROMPT="$prompt_truncated" \
@@ -5070,7 +5140,7 @@ prompt_retention="$(mktemp)"
 todo_retention="$(mktemp)"
 mkdir -p "$state_retention/runs"
 printf 'base prompt\n' > "$prompt_retention"
-printf -- '- [ ] B-01: retention task\n' > "$todo_retention"
+printf -- '- [ ] B-01: Create only `claim-fixture.txt` for retention task\n' > "$todo_retention"
 for old in 1 2 3; do
   printf 'old prompt %s\n' "$old" > "$state_retention/runs/20000101T00000${old}Z.prompt.md"
   printf '{}\n' > "$state_retention/runs/20000101T00000${old}Z.prompt.meta.json"
@@ -5120,7 +5190,7 @@ state_stale_claim="$(mktemp -d)"
 prompt_stale_claim="$(mktemp)"
 todo_stale_claim="$(mktemp)"
 printf 'base prompt\n' > "$prompt_stale_claim"
-printf -- '- [ ] B-new: fresh queue task\n' > "$todo_stale_claim"
+printf -- '- [ ] B-new: Create only `claim-fixture.txt` for fresh queue task\n' > "$todo_stale_claim"
 
 PHASE_LOOP_STATE_DIR="$state_stale_claim" \
 PHASE_LOOP_PROMPT="$prompt_stale_claim" \
@@ -5141,7 +5211,7 @@ todo_text = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8")
 archives = list(archive_dir.glob("stale-*.json"))
 assert archives, "missing stale claim archive"
 assert claim["claim_id"].startswith("todo-g"), claim
-assert claim["selected_todo"].startswith("- [ ] B-new: fresh queue task"), claim
+assert claim["selected_todo"].startswith("- [ ] B-new: Create only `claim-fixture.txt` for fresh queue task"), claim
 assert "PHASE_LOOP_TEST_MUTATED_TODO_AFTER_PROMPT" in todo_text, todo_text
 PY
 
@@ -5149,7 +5219,7 @@ state_generation="$(mktemp -d)"
 prompt_generation="$(mktemp)"
 todo_generation="$(mktemp)"
 printf 'base prompt\n' > "$prompt_generation"
-printf -- '- [ ] B-01: first generation\n' > "$todo_generation"
+printf -- '- [ ] B-01: Create only `claim-fixture.txt` for first generation\n' > "$todo_generation"
 
 PHASE_LOOP_STATE_DIR="$state_generation" \
 PHASE_LOOP_PROMPT="$prompt_generation" \
@@ -5159,7 +5229,7 @@ PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
 run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
 rm "$state_generation/todo-claims/current.json"
-printf -- '- [ ] B-00: externally inserted higher priority\n- [ ] B-01: first generation\n' > "$todo_generation"
+printf -- '- [ ] B-00: Create only `claim-fixture.txt` for externally inserted higher priority\n- [ ] B-01: Create only `claim-fixture.txt` for first generation\n' > "$todo_generation"
 
 PHASE_LOOP_STATE_DIR="$state_generation" \
 PHASE_LOOP_PROMPT="$prompt_generation" \
@@ -5176,7 +5246,7 @@ claim = json.load(open(sys.argv[1], encoding="utf-8"))
 queue_state = json.load(open(sys.argv[2], encoding="utf-8"))
 assert queue_state["generation"] == 2, queue_state
 assert claim["queue_generation"] == 2, claim
-assert claim["selected_todo"].startswith("- [ ] B-00: externally inserted"), claim
+assert claim["selected_todo"].startswith("- [ ] B-00: Create only `claim-fixture.txt` for externally inserted"), claim
 assert claim["queue_fingerprint"] == queue_state["fingerprint"], (claim, queue_state)
 PY
 
@@ -5184,7 +5254,7 @@ state_same_head_queue_growth="$(mktemp -d)"
 prompt_same_head_queue_growth="$(mktemp)"
 todo_same_head_queue_growth="$(mktemp)"
 printf 'base prompt\n' > "$prompt_same_head_queue_growth"
-printf -- '- [ ] B-01: stable first task\n' > "$todo_same_head_queue_growth"
+printf -- '- [ ] B-01: Create only `claim-fixture.txt` for stable first task\n' > "$todo_same_head_queue_growth"
 
 PHASE_LOOP_STATE_DIR="$state_same_head_queue_growth" \
 PHASE_LOOP_PROMPT="$prompt_same_head_queue_growth" \
@@ -5193,7 +5263,7 @@ BROWNIE_BIN="$fake_brownie_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
 run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
-printf -- '- [ ] B-01: stable first task\n- [ ] B-02: appended follow-up task\n' > "$todo_same_head_queue_growth"
+printf -- '- [ ] B-01: Create only `claim-fixture.txt` for stable first task\n- [ ] B-02: appended follow-up task\n' > "$todo_same_head_queue_growth"
 
 PHASE_LOOP_STATE_DIR="$state_same_head_queue_growth" \
 PHASE_LOOP_PROMPT="$prompt_same_head_queue_growth" \
@@ -5212,7 +5282,7 @@ claim = json.load(open(sys.argv[1], encoding="utf-8"))
 queue_state = json.load(open(sys.argv[2], encoding="utf-8"))
 todo_text = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8")
 fingerprint = hashlib.sha256(todo_text.encode("utf-8")).hexdigest()
-assert claim["selected_todo"].startswith("- [ ] B-01: stable first task"), claim
+assert claim["selected_todo"].startswith("- [ ] B-01: Create only `claim-fixture.txt` for stable first task"), claim
 assert claim["queue_fingerprint"] == fingerprint, claim
 assert queue_state["fingerprint"] == fingerprint, queue_state
 assert claim["queue_generation"] == queue_state["generation"], (claim, queue_state)
@@ -5224,7 +5294,7 @@ prompt_legacy="$(mktemp)"
 todo_legacy="$(mktemp)"
 mkdir -p "$state_legacy/todo-claims"
 printf 'base prompt\n' > "$prompt_legacy"
-printf -- '- [ ] B-legacy: migrated claim\n' > "$todo_legacy"
+printf -- '- [ ] B-legacy: Create only `claim-fixture.txt` for migrated claim\n' > "$todo_legacy"
 legacy_fingerprint="$(shasum -a 256 "$todo_legacy" | awk '{ print $1 }')"
 python3 - "$state_legacy/todo-claims/current.json" "$legacy_fingerprint" "$todo_legacy" <<'PY'
 import json
@@ -5233,7 +5303,7 @@ import sys
 claim = {
     "schema_version": 1,
     "claim_id": "todo-legacy-claim",
-    "selected_todo": "- [ ] B-legacy: migrated claim",
+    "selected_todo": "- [ ] B-legacy: Create only `claim-fixture.txt` for migrated claim",
     "queue_fingerprint": sys.argv[2],
     "todo_path": sys.argv[3],
     "created_at": "2026-09-06T00:00:00Z",
@@ -5326,7 +5396,7 @@ state_invalid_json="$(mktemp -d)"
 prompt_invalid_json="$(mktemp)"
 todo_invalid_json="$(mktemp)"
 printf 'base prompt\n' > "$prompt_invalid_json"
-printf -- '- [ ] B-01: invalid json task\n' > "$todo_invalid_json"
+printf -- '- [ ] B-01: Create only `claim-fixture.txt` for invalid json task\n' > "$todo_invalid_json"
 
 if PHASE_LOOP_STATE_DIR="$state_invalid_json" \
   PHASE_LOOP_PROMPT="$prompt_invalid_json" \
@@ -5353,7 +5423,7 @@ state_interruptible="$(mktemp -d)"
 prompt_interruptible="$(mktemp)"
 todo_interruptible="$(mktemp)"
 printf 'base prompt\n' > "$prompt_interruptible"
-printf -- '- [ ] B-12: interruptible backoff task\n' > "$todo_interruptible"
+printf -- '- [ ] B-12: Create only `claim-fixture.txt` for interruptible backoff task\n' > "$todo_interruptible"
 
 # stop_loop writes STOP_FILE before signaling the supervisor. Either observing
 # that marker (0) or receiving TERM (143) is an intentional stop; other exits fail.
@@ -5397,7 +5467,7 @@ prompt_child_stop="$(mktemp)"
 todo_child_stop="$(mktemp)"
 child_pid_file="$state_child_stop/child.pid"
 printf 'base prompt\n' > "$prompt_child_stop"
-printf -- '- [ ] B-11: child-inclusive stop task\n' > "$todo_child_stop"
+printf -- '- [ ] B-11: Create only `claim-fixture.txt` for child-inclusive stop task\n' > "$todo_child_stop"
 
 PHASE_LOOP_STATE_DIR="$state_child_stop" \
 PHASE_LOOP_PROMPT="$prompt_child_stop" \
@@ -6600,6 +6670,19 @@ import pathlib
 import sys
 
 argv = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+# Validate the bound global option before comparing command-specific routing.
+import shlex
+argv_lines = argv if isinstance(argv, list) else argv.splitlines()
+normalized_argv = []
+validator_paths = set()
+for line in argv_lines:
+    args = shlex.split(line)
+    assert args[:2] == ["--json", "--proposal-validator-file"], args
+    assert pathlib.Path(args[2]).is_file(), args
+    validator_paths.add(args[2])
+    normalized_argv.append(" ".join([args[0], *args[3:]]))
+assert len(validator_paths) == 1, validator_paths
+argv = "\n".join(normalized_argv)
 prompt = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
 assert "--json run --file" in argv, argv
 assert "--json resume" not in argv, argv
@@ -6820,6 +6903,7 @@ cat > "$mixed_operation_state/todo-claims/repair-feedback.json" <<'EOF'
   }
 }
 EOF
+mixed_operation_exit=0
 PHASE_LOOP_STATE_DIR="$mixed_operation_state" \
 PHASE_LOOP_PROMPT="$mixed_operation_prompt" \
 PHASE_LOOP_TODO="$mixed_operation_todo" \
@@ -6827,7 +6911,19 @@ PHASE_LOOP_WORKSPACE_ROOT="$mixed_operation_workspace" \
 PHASE_LOOP_SKIP_BINARY_FRESHNESS_CHECK=1 \
 PHASE_LOOP_TEST_ARGV_FILE="$mixed_operation_argv" \
 BROWNIE_BIN="$fake_brownie_repair_feedback" \
-run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 74 "$PHASE_LOOP" run-once >/dev/null || mixed_operation_exit="$?"
+
+test "$mixed_operation_exit" = "74"
+test ! -s "$mixed_operation_argv"
+python3 - "$mixed_operation_state/status.json" "$mixed_operation_todo" <<'PYMIXED'
+import json
+import pathlib
+import sys
+status = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert status["status"] == "blocked", status
+assert "re-estimate or split" in status["detail"], status
+assert "- [ ] E-mixed-operation:" in pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
+PYMIXED
 
 mixed_operation_prompt_file="$(find "$mixed_operation_state/runs" -name '*.prompt.md' -print | sort | tail -n 1)"
 python3 - "$mixed_operation_prompt_file" <<'PY'
@@ -7116,7 +7212,7 @@ ledger_failure_state="$(mktemp -d)"
 ledger_failure_prompt="$(mktemp)"
 ledger_failure_todo="$(mktemp)"
 printf 'base prompt\n' > "$ledger_failure_prompt"
-printf -- '- [ ] L-01: task-ledger failure terminalization\n' > "$ledger_failure_todo"
+printf -- '- [ ] L-01: Create only `claim-fixture.txt` for task-ledger failure terminalization\n' > "$ledger_failure_todo"
 
 if PHASE_LOOP_STATE_DIR="$ledger_failure_state" \
   PHASE_LOOP_PROMPT="$ledger_failure_prompt" \
@@ -7150,7 +7246,7 @@ run_status_write_signal_regression() {
   signal_todo="$(mktemp)"
   signal_marker="$signal_state/status-write.started"
   printf 'base prompt\n' > "$signal_prompt"
-  printf -- '- [ ] S-01: signal during status write\n' > "$signal_todo"
+  printf -- '- [ ] S-01: Create only `claim-fixture.txt` for signal during status write\n' > "$signal_todo"
   PHASE_LOOP_STATE_DIR="$signal_state" \
   PHASE_LOOP_PROMPT="$signal_prompt" \
   PHASE_LOOP_TODO="$signal_todo" \
@@ -7505,6 +7601,19 @@ import pathlib
 import sys
 
 argv = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+# Validate the bound global option before comparing command-specific routing.
+import shlex
+argv_lines = argv if isinstance(argv, list) else argv.splitlines()
+normalized_argv = []
+validator_paths = set()
+for line in argv_lines:
+    args = shlex.split(line)
+    assert args[:2] == ["--json", "--proposal-validator-file"], args
+    assert pathlib.Path(args[2]).is_file(), args
+    validator_paths.add(args[2])
+    normalized_argv.append(" ".join([args[0], *args[3:]]))
+assert len(validator_paths) == 1, validator_paths
+argv = "\n".join(normalized_argv)
 claim = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
 todo = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8")
 feedback = json.loads(pathlib.Path(sys.argv[4]).read_text(encoding="utf-8"))

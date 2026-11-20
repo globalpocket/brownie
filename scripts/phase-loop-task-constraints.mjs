@@ -18,13 +18,16 @@ export function compileTaskConstraints(prompt, { queuePath = '.brownie/todo.md',
   if (typeof prompt !== 'string' || Buffer.byteLength(prompt) > 65536) {
     throw new Error('constraint source prompt exceeds its bound');
   }
-  exactPath(queuePath);
+  // A controller may keep its queue outside the execution workspace. Such a
+  // queue has no Runtime-relative path and cannot be a Runtime write target.
+  if (queuePath !== null) exactPath(queuePath);
   const sections = prompt.split(/^## Selected TODO\s*$/mu);
   if (sections.length !== 2) throw new Error('exactly one Selected TODO section is required');
   const selected = sections[1].split(/^## /mu, 1)[0].trim();
   const firstLine = selected.split('\n')[0];
   if (!/^[-*] \[ \] \S+:/u.test(firstLine)) throw new Error('an unchecked named selected TODO is required');
   const queueOnly = ['decompose_todo', 'todo_queue_repair'].includes(state);
+  if (queueOnly && queuePath === null) throw new Error('external controller queue requires controller-owned replan; no Runtime workspace target');
   if (!queueOnly && !['implementation', 'implement', 'review_rework', 'verify_or_repair', 'release_engineering', 'documentation'].includes(state)) {
     throw new Error('unsupported planning state; re-estimate before Runtime admission');
   }
@@ -37,7 +40,7 @@ export function compileTaskConstraints(prompt, { queuePath = '.brownie/todo.md',
   const operation = entries[0].operation;
   const denied = [...new Set(selected.split('\n').filter((line) => /^\s*Forbidden changes:/u.test(line))
     .flatMap((line) => [...line.matchAll(/`([^`]+)`/gu)].map((match) => exactPath(match[1]))))];
-  if (!queueOnly && !paths.includes(queuePath)) denied.push(queuePath);
+  if (!queueOnly && queuePath !== null && !paths.includes(queuePath)) denied.push(queuePath);
   if (paths.some((path) => denied.includes(path))) throw new Error('selected scope conflicts with Forbidden changes');
   // Recovery instructions are controller policy, not text the Runtime parses.
   // An explicitly admitted exact-context reread takes precedence over a
