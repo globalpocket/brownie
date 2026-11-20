@@ -195,7 +195,7 @@ impl BrownieStore {
     }
 
     pub fn read_active_modepack_snapshot(&self) -> Result<Option<ActiveModePackSnapshot>> {
-        self.ensure_durable_schema()?;
+        self.task_store.ensure_schema_for_read()?;
         let path = self.active_modepack_current_path();
         if !path.exists() {
             return Ok(None);
@@ -211,7 +211,7 @@ impl BrownieStore {
         &self,
         activation_fingerprint: &str,
     ) -> Result<Option<ActiveModePackSnapshot>> {
-        self.ensure_durable_schema()?;
+        self.task_store.ensure_schema_for_read()?;
         let path = self.active_modepack_snapshot_archive_path(activation_fingerprint);
         if path.exists() {
             let content = fs::read_to_string(&path)
@@ -240,6 +240,7 @@ impl BrownieStore {
         &self,
         snapshot: &ActiveModePackSnapshot,
     ) -> Result<ModePackActivationCommit> {
+        self.ensure_durable_schema()?;
         if let Some(existing) = self.read_active_modepack_snapshot()? {
             if existing.summary.source_path == snapshot.summary.source_path
                 && existing.summary.activation_fingerprint
@@ -288,6 +289,7 @@ impl BrownieStore {
         snapshot: &ActiveModePackSnapshot,
         update_admission: Option<&ModePackUpdateAdmissionSummary>,
     ) -> Result<ModePackReplacementCommit> {
+        self.ensure_durable_schema()?;
         if let Some(replayed) = self.find_replayed_active_modepack_replacement(
             expected_current_activation_fingerprint,
             &snapshot.summary.activation_fingerprint,
@@ -367,6 +369,7 @@ impl BrownieStore {
         expected_current_activation_fingerprint: &str,
         expected_rollback_activation_fingerprint: &str,
     ) -> Result<ModePackRollbackCommit> {
+        self.ensure_durable_schema()?;
         if let Some(replayed) = self.find_replayed_active_modepack_rollback(
             expected_current_activation_fingerprint,
             expected_rollback_activation_fingerprint,
@@ -4897,6 +4900,51 @@ impl TaskStore {
         payload: Option<serde_json::Value>,
     ) -> Result<()> {
         self.append_task_events_with_payloads(record, vec![(kind, payload)])
+    }
+
+    /// Record only the two documented inspection summaries, without creating or
+    /// migrating storage when this handle was opened for inspection.
+    pub fn append_inspection_summary(
+        &self,
+        record: &TaskRecord,
+        kind: LedgerEventKind,
+        payload: Option<serde_json::Value>,
+    ) -> Result<()> {
+        if !matches!(
+            kind,
+            LedgerEventKind::WorkspacePatchReadinessReportCreated
+                | LedgerEventKind::WorkspacePatchApplyCapabilityChecked
+        ) {
+            bail!("event kind is not an inspection summary");
+        }
+        if !self.inspection_only {
+            return self.append_task_event_with_payload(record, kind, payload);
+        }
+        self.ensure_schema_for_read()?;
+        if self.read_durable_schema_manifest()?.is_none() {
+            bail!("inspection summary requires an existing current store");
+        }
+        let existing = self
+            .get_task_by_run_id(&record.run_id)?
+            .context("inspection summary requires an existing task")?;
+        if existing.task_id != record.task_id {
+            bail!("inspection summary task identity differs");
+        }
+        self.read_ledger_events(&record.run_id)?;
+        let event = self.build_task_ledger_event(record, kind, payload)?;
+        validate_ledger_event_payload_contract(&event, true)?;
+        let mut buffer = serde_json::to_vec(&event)?;
+        buffer.push(b'\n');
+        let run_dir = self.run_dir(&record.run_id);
+        // No create_dir_all and no create(true): removal after acquisition must
+        // fail instead of silently recreating a store or ledger.
+        let mut file = OpenOptions::new()
+            .append(true)
+            .open(run_dir.join("ledger.jsonl"))
+            .context("inspection summary requires an existing ledger")?;
+        file.write_all(&buffer)?;
+        file.sync_all()?;
+        sync_dir(&run_dir)
     }
 
     pub fn read_ledger_events(&self, run_id: &str) -> Result<Vec<LedgerEvent>> {
@@ -11646,6 +11694,182 @@ fn timestamp() -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    type Snapshot = std::collections::BTreeMap<PathBuf, (bool, Vec<u8>, std::time::SystemTime)>;
+    fn inspection_snapshot(root: &Path) -> Snapshot {
+        fn walk(path: &Path, rows: &mut Snapshot) {
+            let metadata = fs::symlink_metadata(path).unwrap();
+            rows.insert(
+                path.to_path_buf(),
+                (
+                    metadata.is_dir(),
+                    if metadata.is_dir() {
+                        vec![]
+                    } else {
+                        fs::read(path).unwrap()
+                    },
+                    metadata.modified().unwrap(),
+                ),
+            );
+            if metadata.is_dir() {
+                for entry in fs::read_dir(path).unwrap() {
+                    walk(&entry.unwrap().path(), rows);
+                }
+            }
+        }
+        let mut rows = std::collections::BTreeMap::new();
+        walk(root, &mut rows);
+        rows
+    }
+
+    #[test]
+    fn inspection_summary_preserves_invalid_or_missing_store_after_acquisition() {
+        for case in [
+            "valid",
+            "mutable",
+            "empty",
+            "missing-schema",
+            "legacy",
+            "corrupt",
+            "schema-lock",
+            "pending-terminal",
+            "missing-run",
+            "missing-ledger",
+            "wrong-task",
+            "wrong-kind",
+            "bad-payload",
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let mut store = TaskStore::new(temp.path());
+            let mut task = store
+                .start_task(
+                    serde_json::from_value(
+                        serde_json::json!({"goal":"inspection summary", "mode_id":null}),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            store.inspection_only = case != "mutable";
+            store.ensure_schema_for_read().unwrap();
+            let state = temp.path().join(".brownie");
+            let schema = state.join("store-schema.json");
+            let ledger = store.run_dir(&task.run_id).join("ledger.jsonl");
+            let mut kind = LedgerEventKind::WorkspacePatchReadinessReportCreated;
+            let mut payload = Some(serde_json::json!({
+                "proposal_id":"proposal_1", "report_id":"report_1", "readiness_status":"Ready",
+                "readiness_reason":null, "readiness_fingerprint":format!("sha256:{}", "e".repeat(64)),
+                "fingerprint_input_count":3, "generated_at":"2026-09-04T00:00:07Z",
+                "check_count":1, "failed_checks":[], "blocked_checks":[]
+            }));
+            match case {
+                "empty" => fs::remove_dir_all(&state).unwrap(),
+                "missing-schema" => fs::remove_file(&schema).unwrap(),
+                "legacy" => {
+                    let mut value: serde_json::Value =
+                        serde_json::from_slice(&fs::read(&schema).unwrap()).unwrap();
+                    value["store_schema_version"] = serde_json::json!(1);
+                    fs::write(&schema, serde_json::to_vec(&value).unwrap()).unwrap();
+                }
+                "corrupt" => fs::write(&schema, b"corrupt").unwrap(),
+                "schema-lock" => {
+                    fs::write(state.join("store-schema.lock"), b"owner pending").unwrap()
+                }
+                "pending-terminal" => fs::write(
+                    store.run_dir(&task.run_id).join("terminal-transition.json"),
+                    b"pending",
+                )
+                .unwrap(),
+                "missing-run" => fs::remove_dir_all(store.run_dir(&task.run_id)).unwrap(),
+                "missing-ledger" => fs::remove_file(&ledger).unwrap(),
+                "wrong-task" => task.task_id = "another-task".into(),
+                "wrong-kind" => {
+                    kind = LedgerEventKind::TaskCompleted;
+                    payload = None;
+                }
+                "bad-payload" => payload = Some(serde_json::json!({})),
+                _ => {}
+            }
+            let before = inspection_snapshot(temp.path());
+            let result = store.append_inspection_summary(&task, kind, payload);
+            if matches!(case, "valid" | "mutable") {
+                result.unwrap();
+                let events = store.read_ledger_events(&task.run_id).unwrap();
+                assert_eq!(
+                    events.last().unwrap().kind,
+                    LedgerEventKind::WorkspacePatchReadinessReportCreated
+                );
+                let after = inspection_snapshot(temp.path());
+                assert_eq!(
+                    before.keys().collect::<Vec<_>>(),
+                    after.keys().collect::<Vec<_>>()
+                );
+                for (path, value) in &before {
+                    if path != &ledger {
+                        assert_eq!(after.get(path), Some(value), "{case}: unexpected mutation");
+                    } else {
+                        assert!(after[path].1.starts_with(&value.1));
+                    }
+                }
+            } else {
+                assert!(result.is_err(), "{case}: unexpected acceptance");
+                assert_eq!(
+                    inspection_snapshot(temp.path()),
+                    before,
+                    "{case}: refusal mutated state"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn inspection_modepack_reads_do_not_admit_activation_replacement_or_rollback() {
+        for initialized in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let mut store = BrownieStore::new(temp.path());
+            let candidate: ActiveModePackSnapshot = serde_json::from_value(serde_json::json!({
+                "summary": {
+                    "activation_id":"activation_fixture", "activation_fingerprint":"fixture_fingerprint",
+                    "modepack_name":"fixture", "schema_version":1, "source_kind":"fixture",
+                    "source_path":"fixture", "mode_count":0, "mode_ids":[],
+                    "compiled_policy_fingerprint":"fixture_policy", "activated_at":"2026-09-04T00:00:00Z",
+                    "activation_event_id":"fixture_event"
+                }, "policies":[]
+            })).unwrap();
+            if initialized {
+                store.commit_active_modepack_snapshot(&candidate).unwrap();
+            }
+            store.task_store.inspection_only = true;
+            let before = inspection_snapshot(temp.path());
+            assert_eq!(
+                store.read_active_modepack_snapshot().unwrap().is_some(),
+                initialized
+            );
+            assert_eq!(
+                store
+                    .read_active_modepack_snapshot_by_fingerprint("fixture_fingerprint")
+                    .unwrap()
+                    .is_some(),
+                initialized
+            );
+            for error in [
+                store
+                    .commit_active_modepack_snapshot(&candidate)
+                    .unwrap_err()
+                    .to_string(),
+                store
+                    .replace_active_modepack_snapshot("fixture_fingerprint", &candidate, None)
+                    .unwrap_err()
+                    .to_string(),
+                store
+                    .rollback_active_modepack_snapshot("fixture_fingerprint", "previous")
+                    .unwrap_err()
+                    .to_string(),
+            ] {
+                assert!(error.contains("read-only inspection"), "{error}");
+            }
+            assert_eq!(inspection_snapshot(temp.path()), before);
+        }
+    }
 
     #[test]
     fn workspace_apply_lock_process_probe() {
