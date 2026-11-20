@@ -69944,6 +69944,12 @@ mod bounded_progress_public_projection_tests {
 
     #[test]
     fn does_not_publish_progress_for_allowed_or_other_tool_intents() {
+        let mut missing_admission = denied_read();
+        missing_admission.as_object_mut().unwrap().remove("allowed");
+        assert!(sanitize_ledger_payload(Some(missing_admission))
+            .unwrap()
+            .get("progress_outcome")
+            .is_none());
         for (key, value) in [
             ("allowed", json!(true)),
             ("tool_id", json!("workspace.write")),
