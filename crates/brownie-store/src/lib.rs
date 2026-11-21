@@ -3337,6 +3337,13 @@ impl Drop for DurableWriteFailpointGuard {
     }
 }
 
+/// Sync directory metadata using the store's platform policy.
+/// On Windows, unsupported directory flush errors are tolerated only after
+/// callers have synced file content; this is not a power-loss durability claim.
+pub fn sync_directory_metadata(path: &std::path::Path) -> Result<()> {
+    sync_dir(path)
+}
+
 #[cfg(unix)]
 fn sync_dir(path: &std::path::Path) -> Result<()> {
     let file = fs::File::open(path)
