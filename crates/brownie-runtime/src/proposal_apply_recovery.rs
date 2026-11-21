@@ -118,6 +118,8 @@ struct Intent {
     expected_post_write_sha256: Option<String>,
     #[serde(default)]
     terminal_result_sha256: Option<String>,
+    #[serde(default)]
+    recorded_result: Option<WorkspacePatchApplyResultSummary>,
     result: WorkspacePatchApplyResultSummary,
 }
 
@@ -473,6 +475,7 @@ fn build_intent(
             hex_sha256(&std::fs::read(&witness).map_err(error)?)
         )),
         terminal_result_sha256: None,
+        recorded_result: None,
         result: result.clone(),
     };
     Ok(intent)
@@ -518,12 +521,53 @@ pub(super) fn prepare(
     Ok(witness)
 }
 
+// Preserve the exact response before appending its bounded ledger projection.
+// The ledger schema remains unchanged; recovery compares every projected field.
+pub(super) fn retain_recorded_result(
+    store: &BrownieStore,
+    run_id: &str,
+    proposal_id: &str,
+    result: &WorkspacePatchApplyResultSummary,
+) -> Result<(), String> {
+    if !result.applied || !result.authorization_consumed || result.transaction_id.is_some() {
+        return Ok(());
+    }
+    let ip = store.tasks().run_dir(run_id).join(format!(
+        "apply-intent-{}.json",
+        hex_sha256(proposal_id.as_bytes())
+    ));
+    match identity_metadata(&ip) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(error(e)),
+        Ok(_) => {}
+    }
+    regular(&ip)?;
+    let mut intent: Intent =
+        serde_json::from_slice(&std::fs::read(&ip).map_err(error)?).map_err(error)?;
+    if intent.result.apply_id != result.apply_id
+        || intent.result.proposal_id != proposal_id
+        || intent.result.authorization_id != result.authorization_id
+        || intent.result.operation != result.operation
+        || intent.result.path != result.path
+        || intent.terminal_result_sha256.is_some()
+    {
+        return Err(error("recorded response binding mismatch"));
+    }
+    intent.recorded_result = Some(result.clone());
+    let parent = ip.parent().ok_or_else(|| error("missing intent parent"))?;
+    let mut file = tempfile::NamedTempFile::new_in(parent).map_err(error)?;
+    serde_json::to_writer(&mut file, &intent).map_err(error)?;
+    file.as_file().sync_all().map_err(error)?;
+    file.persist(&ip).map_err(error)?;
+    brownie_store::sync_directory_metadata(parent).map_err(error)
+}
+
 pub(super) fn finish(
     store: &BrownieStore,
     task: &TaskRecord,
     params: &ProposalApplyParams,
 ) -> Result<(), String> {
-    cleanup_recorded(store, task, params)
+    cleanup_recorded(store, task, params).map(|_| ())
 }
 
 /// Finalization after a result append was durable but the process exited before
@@ -532,10 +576,10 @@ pub(super) fn cleanup_recorded(
     store: &BrownieStore,
     task: &TaskRecord,
     params: &ProposalApplyParams,
-) -> Result<(), String> {
+) -> Result<Option<WorkspacePatchApplyResultSummary>, String> {
     let ip = path(store, params);
     match identity_metadata(&ip) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(error(e)),
         Ok(_) => {}
     }
@@ -626,6 +670,20 @@ pub(super) fn cleanup_recorded(
             }
         }
     }
+    let recorded = intent
+        .recorded_result
+        .as_ref()
+        .ok_or_else(|| error("complete recorded response unavailable"))?;
+    let full = serde_json::to_value(recorded).map_err(error)?;
+    if !results[0]
+        .as_object()
+        .ok_or_else(|| error("invalid ledger result"))?
+        .iter()
+        .all(|(key, value)| full.get(key) == Some(value))
+    {
+        return Err(error("recorded response differs from ledger"));
+    }
+    let recorded = recorded.clone();
     let digest = hex_sha256(&serde_json::to_vec(results[0]).map_err(error)?);
     if let Some(terminal) = &intent.terminal_result_sha256 {
         if terminal != &digest {
@@ -660,7 +718,8 @@ pub(super) fn cleanup_recorded(
             }
             cleanup(&ip, &witness, &staging)
         }
-    }
+    }?;
+    Ok(Some(recorded))
 }
 
 #[cfg(test)]

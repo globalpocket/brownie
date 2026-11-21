@@ -91,6 +91,8 @@ fn record_apply_result(
         .filter(|check| check.status == "Blocked")
         .map(|check| check.name.clone())
         .collect();
+    #[cfg(any(unix, windows))]
+    replacement_recovery::retain_recorded_result(store, run_id, proposal_id, &apply_result)?;
     let mut payload = json!({
         "proposal_id": proposal_id,
         "apply_id": &apply_result.apply_id,
@@ -6299,7 +6301,12 @@ fn apply_proposal_under_lock(
             operation.as_str(),
             "replace_file" | "patch_file" | "create_file" | "delete_file"
         ) {
-            replacement_recovery::cleanup_recorded(store, &task, params)?;
+            if let Some(recorded) = replacement_recovery::cleanup_recorded(store, &task, params)? {
+                return Ok((
+                    inspect_proposal(store, &params.run_id, &params.proposal_id)?,
+                    recorded,
+                ));
+            }
         }
 
         apply_result.checklist.push(apply_result_check(

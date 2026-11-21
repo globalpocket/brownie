@@ -553,6 +553,8 @@ fn workspace_recovery_process_loss_controls(operation: &str, external_kill: bool
         "recorded",
         "terminal",
         "terminal-altered-digest",
+        "terminal-altered-response",
+        "terminal-missing-response",
         "terminal-changed-request",
         "terminal-replaced-target",
         "terminal-edited-target",
@@ -777,6 +779,14 @@ fn workspace_recovery_process_loss_controls(operation: &str, external_kill: bool
                     std::fs::write(&foreign, std::fs::read(&staging).unwrap()).unwrap();
                     std::fs::rename(foreign, staging).unwrap();
                 }
+                "terminal-altered-response" => {
+                    intent["recorded_result"]["apply_reason"] = json!("unbound response");
+                    std::fs::write(&intent_path, serde_json::to_vec(&intent).unwrap()).unwrap();
+                }
+                "terminal-missing-response" => {
+                    intent.as_object_mut().unwrap().remove("recorded_result");
+                    std::fs::write(&intent_path, serde_json::to_vec(&intent).unwrap()).unwrap();
+                }
                 "terminal-altered-digest" => {
                     intent["terminal_result_sha256"] = json!("0".repeat(64));
                     std::fs::write(&intent_path, serde_json::to_vec(&intent).unwrap()).unwrap();
@@ -944,6 +954,28 @@ fn workspace_recovery_process_loss_controls(operation: &str, external_kill: bool
                 retry.status.success(),
                 "{case}: {}",
                 String::from_utf8_lossy(&retry.stderr)
+            );
+        }
+        if matches!(case, "recorded" | "terminal") {
+            let recovered: Value =
+                serde_json::from_slice(&std::fs::read(root.join("response-retry1.json")).unwrap())
+                    .unwrap();
+            let committed: Value = std::fs::read_to_string(run_dir.join("ledger.jsonl"))
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str::<Value>(line).unwrap())
+                .find(|event| {
+                    event["kind"] == "WorkspacePatchApplyResultRecorded"
+                        && event["payload"]["apply_status"] == "Applied"
+                })
+                .unwrap();
+            assert_eq!(
+                recovered["result"]["apply_result"]["apply_status"], "Applied",
+                "{case}: replay must return the durably committed result"
+            );
+            assert_eq!(
+                recovered["result"]["apply_result"]["apply_id"], committed["payload"]["apply_id"],
+                "{case}: replay changed result identity"
             );
         }
         let ledger = std::fs::read_to_string(run_dir.join("ledger.jsonl")).unwrap();
