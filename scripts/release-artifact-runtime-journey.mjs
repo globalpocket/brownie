@@ -1,4 +1,5 @@
 import { extractReleaseArchive } from './release-artifact-extract.mjs';
+import { artifactWorkflowProvenance } from './release-artifact-workflow-provenance.mjs';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -310,6 +311,7 @@ function evidencePathFrom(options) {
 
 export async function runReleaseArtifactRuntimeJourney(options = {}) {
   const workflowRunId = options.workflowRunId ?? process.env.GITHUB_RUN_ID ?? null;
+  const workflowProvenance = artifactWorkflowProvenance(repoRoot, workflowRunId);
   const targetId = options.targetId ?? process.env.BROWNIE_RELEASE_RUNTIME_JOURNEY_TARGET ?? '';
   const target = releaseTargets.find((candidate) => candidate.id === targetId);
   if (!target) throw new Error(`unsupported release Runtime journey target: ${targetId || '<missing>'}`);
@@ -385,6 +387,7 @@ export async function runReleaseArtifactRuntimeJourney(options = {}) {
 
     const evidence = {
       schema_version: 1, evidence_id: 'brownie-release-artifact-runtime-journey-v1', target: target.id, workflow_run_id: workflowRunId,
+      ...workflowProvenance,
       artifact: { archive_sha256: sha256File(archivePath), ...packageIntegrity },
       bounds: { maximum_resume_attempts: 4, resume_attempts: resumeAttempts, cli_commands_executed: 3 + resumeAttempts, per_command_timeout_ms: 60_000 },
       checks: {

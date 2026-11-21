@@ -132,6 +132,9 @@ jobs:
         with:
           node-version: 20
 
+      - name: Verify artifact workflow provenance
+        run: node --test scripts/release-artifact-workflow-provenance.test.mjs
+
       - name: Verify provider process cleanup
         run: node --test --test-name-pattern="^provider " scripts/release-artifact-runtime-journey.test.mjs
 
@@ -149,6 +152,7 @@ jobs:
 
       - name: Run downloaded artifact Runtime journey
         env:
+          BROWNIE_RELEASE_REQUIRE_WORKFLOW_PROVENANCE: '1'
           BROWNIE_RELEASE_RUNTIME_JOURNEY_DOWNLOAD_ROOT: roundtrip-download
           BROWNIE_RELEASE_RUNTIME_JOURNEY_TARGET: ${{ matrix.target }}
           BROWNIE_RELEASE_RUNTIME_JOURNEY_EVIDENCE_PATH: roundtrip-download/runtime-journey-evidence.json
@@ -156,6 +160,7 @@ jobs:
 
       - name: Run downloaded artifact stateful soak
         env:
+          BROWNIE_RELEASE_REQUIRE_WORKFLOW_PROVENANCE: '1'
           BROWNIE_RELEASE_ARTIFACT_SOAK_DOWNLOAD_ROOT: roundtrip-download
           BROWNIE_RELEASE_ARTIFACT_SOAK_TARGET: ${{ matrix.target }}
           BROWNIE_RELEASE_ARTIFACT_SOAK_EVIDENCE_PATH: roundtrip-download/runtime-stateful-soak-evidence.json

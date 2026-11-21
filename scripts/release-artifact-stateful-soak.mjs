@@ -1,4 +1,5 @@
 import { extractReleaseArchive } from './release-artifact-extract.mjs';
+import { artifactWorkflowProvenance } from './release-artifact-workflow-provenance.mjs';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -299,6 +300,7 @@ function bootstrapSoakRuntime(runtime, environment) {
 
 export async function runReleaseArtifactStatefulSoak(options = {}) {
   const workflowRunId = workflowRunIdFrom(options);
+  const workflowProvenance = artifactWorkflowProvenance(repoRoot, workflowRunId);
   const commandLimit = boundedCommandLimit(options);
   const targetId = options.targetId ?? process.env.BROWNIE_RELEASE_ARTIFACT_SOAK_TARGET ?? '';
   const target = releaseTargets.find((candidate) => candidate.id === targetId);
@@ -356,6 +358,7 @@ export async function runReleaseArtifactStatefulSoak(options = {}) {
     if (afterReplay !== afterRecovery || ledgerAfterReplay.sha256 !== ledgerAfterRecovery.sha256) throw new Error('replay caused a duplicate side effect after terminal convergence');
     return {
       schema_version: 1, evidence_id: 'brownie-release-artifact-stateful-soak-v1', target: target.id, workflow_run_id: workflowRunId,
+      ...workflowProvenance,
       bounds: { maximum_commands: commandLimit, commands_executed: 3, command_scope: 'state_transition_cli_invocations', bootstrap_runtime_calls: 1, total_runtime_processes: 4, per_command_timeout_ms: 60_000 },
       artifact: { archive_sha256: sha256File(archivePath), ...packageIntegrity },
       checks: {
