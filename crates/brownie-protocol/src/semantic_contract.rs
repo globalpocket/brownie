@@ -3025,8 +3025,8 @@ pub fn ledger_payload_schema_version(kind: &str) -> u64 {
         | "WorkspacePatchApplyPlanCreated"
         | "WorkspacePatchApplyCapabilityChecked"
         | "WorkspacePatchApplyDryRunChecked"
-        | "WorkspacePatchApplyResultRecorded"
         | "WorkspacePatchReadinessReportCreated" => 12,
+        "WorkspacePatchApplyResultRecorded" => 14,
         "HeadlessContinuationDecisionRecorded"
         | "HeadlessRunSessionAdvanced"
         | "HeadlessRunSessionDriveCompleted"
@@ -3292,6 +3292,14 @@ pub fn ledger_payload_schema_descriptor(kind: &str) -> String {
 }
 
 pub fn ledger_payload_schema_descriptor_for_version(kind: &str, schema_version: u64) -> String {
+    if kind == "WorkspacePatchApplyResultRecorded" {
+        return match schema_version {
+            12 | 13 => workspace_patch_apply_result_payload_schema_descriptor()
+                .replace("recorded_response_sha256:string_or_null,", ""),
+            14 => workspace_patch_apply_result_payload_schema_descriptor(),
+            _ => "unsupported{ledger_payload_schema_compatibility_entry_required:true}".to_string(),
+        };
+    }
     if schema_version < ledger_payload_schema_version(kind)
         || schema_version > LEDGER_PAYLOAD_LEGACY_GLOBAL_SCHEMA_MAX_VERSION
     {
@@ -3510,7 +3518,7 @@ fn workspace_patch_apply_dry_run_payload_schema_descriptor() -> String {
 }
 
 fn workspace_patch_apply_result_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:applied:boolean,apply_id:string,apply_reason:string,apply_status:string,authorization_consumed:boolean,blocked_checks:array<string>,failed_checks:array<string>,operation:string,path:string,proposal_id:string;known_optional_fields:applied_at:string_or_null,atomic_create_completed:boolean_or_null,atomic_delete_completed:boolean_or_null,atomic_replacement_completed:boolean_or_null,authorization_id:string_or_null,check_count:u64,checked_at:string_or_null,content_bytes:u64,content_chars:u64,expected_target_absent:boolean_or_null,expected_target_sha256:string_or_null,hunk_count:u64,hunk_fingerprint:string_or_null,post_delete_target_exists:boolean_or_null,post_write_sha256:string_or_null,pre_write_target_exists:boolean_or_null,pre_write_target_sha256:string_or_null,temp_file_cleaned:boolean_or_null,transaction_id:string_or_null,transaction_item_count:u64,transaction_items:array,transaction_recovery_source:object,transaction_recovery_status:string_or_null,transaction_status:string_or_null;additional_fields:false;workspace_patch_apply_result_payload:true}".to_string()
+    "strict_typed{payload_optional:false;required_fields:applied:boolean,apply_id:string,apply_reason:string,apply_status:string,authorization_consumed:boolean,blocked_checks:array<string>,failed_checks:array<string>,operation:string,path:string,proposal_id:string;known_optional_fields:applied_at:string_or_null,atomic_create_completed:boolean_or_null,atomic_delete_completed:boolean_or_null,atomic_replacement_completed:boolean_or_null,authorization_id:string_or_null,check_count:u64,checked_at:string_or_null,content_bytes:u64,content_chars:u64,expected_target_absent:boolean_or_null,expected_target_sha256:string_or_null,hunk_count:u64,hunk_fingerprint:string_or_null,post_delete_target_exists:boolean_or_null,post_write_sha256:string_or_null,pre_write_target_exists:boolean_or_null,pre_write_target_sha256:string_or_null,recorded_response_sha256:string_or_null,temp_file_cleaned:boolean_or_null,transaction_id:string_or_null,transaction_item_count:u64,transaction_items:array,transaction_recovery_source:object,transaction_recovery_status:string_or_null,transaction_status:string_or_null;additional_fields:false;workspace_patch_apply_result_payload:true}".to_string()
 }
 
 fn workspace_patch_readiness_report_payload_schema_descriptor() -> String {

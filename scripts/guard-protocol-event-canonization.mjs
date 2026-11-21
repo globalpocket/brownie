@@ -409,7 +409,8 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
   for (const variant of ledgerVariants) {
     const entry = fingerprintByKind.get(variant);
     requireValue(Boolean(entry), errors, `${contractPath} durable_event_migration_coupling.event_payload_schema_fingerprints must include ${variant}.`);
-    requireValue(Number.isInteger(entry?.payload_schema_version) && entry.payload_schema_version >= 1 && entry.payload_schema_version <= 13, errors, `${contractPath} ${variant} payload_schema_version must be event-specific and within supported v1-v13 compatibility.`);
+    const maxSchemaVersion = variant === 'WorkspacePatchApplyResultRecorded' ? 14 : 13;
+    requireValue(Number.isInteger(entry?.payload_schema_version) && entry.payload_schema_version >= 1 && entry.payload_schema_version <= maxSchemaVersion, errors, `${contractPath} ${variant} payload_schema_version must be event-specific and within supported v1-v${maxSchemaVersion} compatibility.`);
     if (Number.isInteger(entry?.payload_schema_version)) {
       payloadSchemaVersions.add(entry.payload_schema_version);
     }
