@@ -154,7 +154,7 @@ async function startFixtureProvider(environment) {
     "  request.on('data', chunk => { bytes += chunk.length; if (bytes > 1024 * 1024) request.destroy(); });",
     "  request.on('end', () => { if (index >= 12) return send(429, {error:'fixture_request_budget'}); send(200, responses[Math.min(index++, responses.length - 1)]); });",
     '});',
-    "server.listen(0, '127.0.0.1', () => fs.writeFileSync(portPath, JSON.stringify({base_url:'http://127.0.0.1:'+server.address().port+'/v1'})));",
+    "server.listen(0, '127.0.0.1', () => { fs.writeFileSync(portPath + '.tmp', JSON.stringify({base_url:'http://127.0.0.1:'+server.address().port+'/v1'})); fs.renameSync(portPath + '.tmp', portPath); });",
     "process.on('SIGTERM', () => server.close(() => process.exit(0)));",
     'setInterval(() => { try { process.kill(parent, 0); } catch { server.close(() => process.exit(0)); } }, 1000).unref();'
   ].join('\n'));
@@ -164,8 +164,17 @@ async function startFixtureProvider(environment) {
   child.on('error', (error) => { startupError = error; });
   const deadline = Date.now() + 5000;
   while (!fs.existsSync(portPath) && !startupError && child.exitCode === null && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 25));
-  if (!fs.existsSync(portPath)) { await stop(); throw startupError ?? new Error('isolated fixture provider bootstrap timed out'); }
-  return { baseUrl: JSON.parse(fs.readFileSync(portPath, 'utf8')).base_url, stop };
+  try {
+    if (!fs.existsSync(portPath)) throw startupError ?? new Error('isolated fixture provider bootstrap timed out');
+    return { baseUrl: JSON.parse(fs.readFileSync(portPath, 'utf8')).base_url, stop };
+  } catch (error) {
+    try {
+      await stop();
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'Fixture provider startup and cleanup failed', { cause: error });
+    }
+    throw error;
+  }
 }
 
 export function fixtureEnvironment(workspaceRoot) {
