@@ -4075,6 +4075,16 @@ fn validate_verification_recovery_context_read(
         )
     })?;
     validate_selected_index_context_permission(policy, RuntimeAction::ReadWorkspace)?;
+    if controlled_tool_execution::workspace_read_constraint_rejection_reason(
+        store, record, &safe_path,
+    )
+    .map_err(|error| TaskRunAdmissionRejection::Internal(error.to_string()))?
+    .is_some()
+    {
+        return invalid_verification_recovery_context_read(
+            "workspace read exceeds admitted task constraints",
+        );
+    }
     let excerpt = read_verification_recovery_context_excerpt(
         store.workspace_root(),
         &safe_path,
@@ -16799,6 +16809,154 @@ mod tests {
             error.contains("external responsibility items must not be blocking"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn verification_recovery_context_read_enforces_inherited_constraints() {
+        let _guard = lock_env();
+        for constraints in [
+            json!({"read_paths": [], "max_workspace_reads": 0}),
+            json!({"read_paths": ["other.rs"]}),
+            json!({"denied_read_paths": ["src/lib.rs"]}),
+            json!({"read_paths": ["src/lib.rs"], "max_workspace_reads": 0}),
+        ] {
+            let temp = tempfile::tempdir().expect("tempdir");
+            write_cargo_check_fixture(
+                temp.path(),
+                "constrained_recovery_context",
+                "pub fn private_context_marker() -> MissingType { 1 }\n",
+            );
+            std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+            std::env::remove_var("BROWNIE_LLM_PROVIDER");
+            std::env::remove_var("BROWNIE_LLM_STRICT");
+            let (source_task_id, source_run_id, fingerprint) =
+                failed_verification_source_from_start_and_run(
+                    &json!({"jsonrpc":"2.0", "id":1, "method":"task.start", "params":{
+                        "goal":"Verify compilation with cargo check", "mode_id":"verifier",
+                        "execution_constraints":constraints
+                    }})
+                    .to_string(),
+                );
+            let (task_id, run_id) = start_verification_recovery_task_from_source(
+                &source_task_id,
+                &source_run_id,
+                &fingerprint,
+                "Recover the compiler diagnostic",
+                "implementer",
+            );
+            let response = parse_line(&json!({"jsonrpc":"2.0", "id":4, "method":"task.run", "params":{
+                "task_id":task_id,
+                "verification_recovery_context_read":{
+                    "authorize":true, "source_task_id":source_task_id, "source_run_id":source_run_id,
+                    "expected_failure_fingerprint":fingerprint, "diagnostic_index":0, "max_excerpt_bytes":128
+                }
+            }}).to_string());
+            std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+            assert!(
+                response.error.is_some(),
+                "inherited constraints must deny context read: {constraints}"
+            );
+            let events = store_events(temp.path(), &run_id);
+            assert!(!events.iter().any(|event| matches!(
+                event.kind,
+                LedgerEventKind::TaskRunning
+                    | LedgerEventKind::VerificationRecoveryContextReadMaterialized
+                    | LedgerEventKind::LlmRequestCreated
+            )));
+        }
+    }
+
+    #[test]
+    fn verification_recovery_context_read_consumes_shared_budget_once() {
+        let _guard = lock_env();
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_cargo_check_fixture(
+            temp.path(),
+            "recovery_shared_budget",
+            "pub fn diagnostic_context() -> MissingType { 1 }\n",
+        );
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::remove_var("BROWNIE_LLM_PROVIDER");
+        std::env::remove_var("BROWNIE_LLM_STRICT");
+        let (source_task_id, source_run_id, fingerprint) =
+            failed_verification_source_from_start_and_run(
+                &json!({"jsonrpc":"2.0", "id":1, "method":"task.start", "params":{
+                    "goal":"Verify compilation with cargo check", "mode_id":"verifier",
+                    "execution_constraints":{"read_paths":["src/lib.rs"], "max_workspace_reads":1}
+                }})
+                .to_string(),
+            );
+        let (task_id, run_id) = start_verification_recovery_task_from_source(
+            &source_task_id,
+            &source_run_id,
+            &fingerprint,
+            "Recover the compiler diagnostic",
+            "implementer",
+        );
+        let target = json!({"authorize":true, "source_task_id":source_task_id, "source_run_id":source_run_id,
+            "expected_failure_fingerprint":fingerprint, "diagnostic_index":0, "max_excerpt_bytes":128});
+        let request = json!({"jsonrpc":"2.0", "id":4, "method":"task.run", "params":{
+            "task_id":task_id, "verification_recovery_context_read":target
+        }})
+        .to_string();
+        let response = parse_line(&request);
+        assert!(response.error.is_none(), "{response:?}");
+        let store = BrownieStore::new(temp.path());
+        let record = store.tasks().get_task(&task_id).unwrap().unwrap();
+        let policy = resolve_policy_for_task_run(&record, &store).unwrap();
+        assert_eq!(
+            store_events(temp.path(), &run_id)
+                .iter()
+                .filter(|event| event.kind
+                    == LedgerEventKind::VerificationRecoveryContextReadMaterialized)
+                .count(),
+            1
+        );
+        // Replay returns the retained summary; it must not read or debit again.
+        let replay = parse_line(&request);
+        assert!(replay.error.is_none(), "{replay:?}");
+        assert_eq!(
+            store_events(temp.path(), &run_id)
+                .iter()
+                .filter(|event| event.kind
+                    == LedgerEventKind::VerificationRecoveryContextReadMaterialized)
+                .count(),
+            1
+        );
+        // The ordinary tool path and another context materialization both see
+        // the same durable debit, including after reopening the store.
+        let assistant = format!(
+            "```brownie-tool-intent\n{}\n```",
+            json!({"tool_requests":[{
+                "tool_id":"workspace.read", "reason":"read diagnostic again", "input":{"path":"src/lib.rs"}
+            }]})
+        );
+        controlled_tool_execution::append_tool_intent_events(&store, &record, &policy, &assistant)
+            .unwrap();
+        controlled_tool_execution::handle_approved_workspace_intents(
+            &store, &record, &policy, &assistant,
+        )
+        .unwrap();
+        assert!(!store_events(temp.path(), &run_id)
+            .iter()
+            .any(
+                |event| event.kind == LedgerEventKind::ToolExecutionCompleted
+                    && event
+                        .payload
+                        .as_ref()
+                        .and_then(|v| v.get("tool_id"))
+                        .and_then(Value::as_str)
+                        == Some("workspace.read")
+            ));
+        let reopened = BrownieStore::new(temp.path());
+        assert!(validate_verification_recovery_context_read(
+            &reopened,
+            &record,
+            &policy,
+            &serde_json::from_value(target).unwrap()
+        )
+        .is_err());
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 
     #[test]

@@ -32,20 +32,20 @@
   "metrics": {
     "files": {
       "crates/brownie-runtime/src/lib.rs": {
-        "line_count": 70188,
+        "line_count": 70346,
         "public_items": 4,
         "private_items": 544,
-        "production_line_count": 16067,
-        "test_line_count": 54121,
+        "production_line_count": 16077,
+        "test_line_count": 54269,
         "state_mutation_mentions": 307,
         "durable_write_mentions": 228,
         "permission_decision_mentions": 274,
-        "recovery_mentions": 2267,
+        "recovery_mentions": 2280,
         "rpc_dispatch_mentions": 90,
         "approval_mentions": 536,
         "mcp_mentions": 600,
         "product_dod_mentions": 922,
-        "diagnostics_mentions": 1815
+        "diagnostics_mentions": 1821
       },
       "crates/brownie-runtime/src/codebase_index.rs": {
         "line_count": 1589,
@@ -62,13 +62,13 @@
         "diagnostics_mentions": 0
       },
       "crates/brownie-runtime/src/controlled_tool_execution.rs": {
-        "line_count": 6363,
-        "public_items": 68,
+        "line_count": 6377,
+        "public_items": 69,
         "private_items": 64,
         "state_mutation_mentions": 48,
         "durable_write_mentions": 48,
         "permission_decision_mentions": 77,
-        "recovery_mentions": 56,
+        "recovery_mentions": 58,
         "rpc_dispatch_mentions": 0,
         "approval_mentions": 228,
         "mcp_mentions": 366,

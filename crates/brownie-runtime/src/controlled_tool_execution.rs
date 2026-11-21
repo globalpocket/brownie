@@ -2809,16 +2809,12 @@ pub(super) fn workspace_write_constraint_rejection_reason(
     None
 }
 
-fn workspace_read_intent_runtime_rejection_reason(
+pub(super) fn workspace_read_constraint_rejection_reason(
     store: &BrownieStore,
     record: &brownie_protocol::TaskRecord,
-    input: &Value,
+    path: &str,
 ) -> anyhow::Result<Option<String>> {
     if let Some(constraints) = &record.execution_constraints {
-        let path = input
-            .get("path")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
         if !constraints.allows_read(path) {
             return Ok(Some(
                 "task_execution_constraint_denied: workspace read exceeds admitted restrictions"
@@ -2831,13 +2827,14 @@ fn workspace_read_intent_runtime_rejection_reason(
                 .read_ledger_events(&record.run_id)?
                 .iter()
                 .filter(|event| {
-                    event.kind == LedgerEventKind::ToolExecutionCompleted
-                        && event
-                            .payload
-                            .as_ref()
-                            .and_then(|payload| payload.get("tool_id"))
-                            .and_then(Value::as_str)
-                            == Some(WORKSPACE_READ_TOOL_ID)
+                    event.kind == LedgerEventKind::VerificationRecoveryContextReadMaterialized
+                        || (event.kind == LedgerEventKind::ToolExecutionCompleted
+                            && event
+                                .payload
+                                .as_ref()
+                                .and_then(|payload| payload.get("tool_id"))
+                                .and_then(Value::as_str)
+                                == Some(WORKSPACE_READ_TOOL_ID))
                 })
                 .count() as u64;
             if constraints.read_budget_exhausted(completed) {
@@ -2846,9 +2843,26 @@ fn workspace_read_intent_runtime_rejection_reason(
                 ));
             }
         }
-        // The admitted typed policy is authoritative. Goal text cannot add a
-        // second, project-specific interpretation after this intersection.
-        return Ok(None);
+    }
+    Ok(None)
+}
+
+fn workspace_read_intent_runtime_rejection_reason(
+    store: &BrownieStore,
+    record: &brownie_protocol::TaskRecord,
+    input: &Value,
+) -> anyhow::Result<Option<String>> {
+    if record.execution_constraints.is_some() {
+        // Tool reads and recovery excerpts share the persisted task-local budget.
+        // Goal text cannot add a second interpretation of the typed policy.
+        return workspace_read_constraint_rejection_reason(
+            store,
+            record,
+            input
+                .get("path")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        );
     }
     if !task_requires_workspace_write_proposal(record) {
         return Ok(None);
