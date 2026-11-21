@@ -4,6 +4,22 @@ import { createHash } from 'node:crypto';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { boundedScopeEntries } from './phase-loop-bounded-scope.mjs';
 
+// Preserve the original compiler's field order for existing pinned claims,
+// independently of JSON object ordering in a transport such as serde_json.
+export function taskPolicyMetadataDigest(metadata) {
+  const keys = ['selected_todo_text', 'selected_todo_sha256', 'bdk_state', 'queue_relative_path'];
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)
+      || Object.keys(metadata).some(key => !keys.includes(key))
+      || keys.slice(0, 3).some(key => !Object.hasOwn(metadata, key))
+      || keys.slice(0, 3).some(key => typeof metadata[key] !== 'string')
+      || (metadata.queue_relative_path !== undefined && metadata.queue_relative_path !== null
+        && typeof metadata.queue_relative_path !== 'string')) {
+    throw new Error('invalid policy metadata');
+  }
+  const ordered = Object.fromEntries(keys.map(key => [key, metadata[key]]));
+  return `sha256:${createHash('sha256').update(JSON.stringify(ordered)).digest('hex')}`;
+}
+
 function exactPath(value) {
   if (typeof value !== 'string' || !value || Buffer.byteLength(value) > 2048 ||
       /[\u0000-\u001f\u007f-\u009f\\:*?\[\]]/u.test(value) ||
@@ -119,7 +135,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     program: process.execPath,
     args: [fileURLToPath(new URL('./repair-todo-decomposition.mjs', import.meta.url)), '--validate-runtime-proposal', '1'],
     // Keep the validated scope in the claim, independent of prompt retention.
-    context: { metadata: policyMetadata, metadata_sha256: `sha256:${createHash('sha256').update(JSON.stringify(policyMetadata)).digest('hex')}` }
+    context: { metadata: policyMetadata, metadata_sha256: taskPolicyMetadataDigest(policyMetadata) }
   };
   if (Buffer.byteLength(JSON.stringify(validator)) > 65536) throw new Error('validator policy exceeds its bound; split the TODO');
   try {

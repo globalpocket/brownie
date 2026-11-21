@@ -27,6 +27,20 @@ test('external controller queue admits only the bound workspace proposal without
   assert.deepEqual(validateRuntimeProposalRequest(bytes, root), {
     schema_version: 1, valid: true, applied: false, request_sha256: `sha256:${digest(bytes)}`
   });
+  // serde_json reorders object keys while forwarding this policy through the
+  // actual CLI. Its semantic identity must survive that transport unchanged.
+  for (const keys of [Object.keys(metadata).sort(), Object.keys(metadata).reverse()]) {
+    const transported = structuredClone(request);
+    transported.context.metadata = Object.fromEntries(keys.map(key => [key, metadata[key]]));
+    assert.equal(validateRuntimeProposalRequest(Buffer.from(JSON.stringify(transported)), root).valid, true);
+    for (const key of keys) {
+      const changed = structuredClone(transported);
+      changed.context.metadata[key] = `${metadata[key]}-changed`;
+      assert.throws(() => validateRuntimeProposalRequest(Buffer.from(JSON.stringify(changed)), root), /stale policy metadata/u);
+    }
+    transported.context.metadata.unbound = 'must not be omitted from identity';
+    assert.throws(() => validateRuntimeProposalRequest(Buffer.from(JSON.stringify(transported)), root), /policy metadata/u);
+  }
   for (const targetPath of ['.brownie/todo.md', '../queue.md', '/tmp/queue.md', 'unrelated.txt']) {
     request.proposal.proposal.path = targetPath;
     assert.throws(() => validateRuntimeProposalRequest(Buffer.from(JSON.stringify(request)), root), /outside bound controller policy/u);

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { validateTodoDecompositionText, validateTodoDecompositionCandidate } from './guard-todo-decomposition.mjs';
 import { loadTodoState } from './phase-loop-todo-state.mjs';
-import { compileTaskConstraints } from './phase-loop-task-constraints.mjs';
+import { compileTaskConstraints, taskPolicyMetadataDigest } from './phase-loop-task-constraints.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -193,7 +193,7 @@ export function validateRuntimeProposalRequest(bytes, workspaceRoot) {
   if (!['before_authorization', 'before_apply'].includes(stage)) throw new Error('invalid validation stage');
   if (stage === 'before_authorization' && request.proposal?.proposal?.approval_status !== 'Pending') throw new Error('review requires a pending proposal');
   const metadata = request.context?.metadata;
-  if (!metadata || validationDigest(JSON.stringify(metadata)) !== request.context?.metadata_sha256) throw new Error('stale policy metadata');
+  if (taskPolicyMetadataDigest(metadata) !== request.context?.metadata_sha256) throw new Error('stale policy metadata');
   if (typeof metadata.selected_todo_text !== 'string'
       || validationDigest(metadata.selected_todo_text) !== `sha256:${metadata.selected_todo_sha256}`) throw new Error('stale selected TODO');
   const constraints = compileTaskConstraints(`## Selected TODO\n\n${metadata.selected_todo_text}\n`, {
