@@ -6400,6 +6400,9 @@ impl RunLedger {
             .append(true)
             .open(self.run_dir.join("ledger.jsonl"))
             .context("failed to open run ledger")?;
+        // Readers must not observe a partial JSON record, and concurrent
+        // batches must not interleave if write_all needs more than one write.
+        FileExt::lock_exclusive(&file).context("failed to lock run ledger for append")?;
         file.write_all(&buffer)
             .context("failed to append run ledger events")?;
         file.sync_all()
@@ -6416,6 +6419,7 @@ impl RunLedger {
 
         let file = fs::File::open(&ledger_path)
             .with_context(|| format!("failed to open {}", ledger_path.display()))?;
+        FileExt::lock_shared(&file).context("failed to lock run ledger for read")?;
         let reader = BufReader::new(file);
         let mut events = Vec::new();
         for line in reader.lines() {
@@ -14169,6 +14173,56 @@ mod tests {
                 ],
             )
             .expect("strict headless payloads should append");
+    }
+
+    #[test]
+    fn ledger_read_waits_for_in_progress_append() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let run_dir = temp.path().join("run_1");
+        fs::create_dir_all(&run_dir).unwrap();
+        let payload = serde_json::json!({"status": "Completed"});
+        let event = LedgerEvent {
+            event_id: "evt_1".into(),
+            task_id: "task_1".into(),
+            run_id: "run_1".into(),
+            kind: LedgerEventKind::TaskCompleted,
+            timestamp: "2026-09-03T00:00:00Z".into(),
+            payload_envelope: ledger_payload_envelope(
+                &LedgerEventKind::TaskCompleted,
+                Some(&payload),
+            )
+            .unwrap(),
+            payload: Some(payload),
+        };
+        let bytes = format!("{}\n", serde_json::to_string(&event).unwrap()).into_bytes();
+        let mut writer = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(run_dir.join("ledger.jsonl"))
+            .unwrap();
+        FileExt::lock_exclusive(&writer).unwrap();
+        let split = bytes.len() / 2;
+        writer.write_all(&bytes[..split]).unwrap();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        let reader = thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let result = RunLedger::new(run_dir)
+                .read_events()
+                .map_err(|e| format!("{e:#}"));
+            result_tx.send(result).unwrap();
+        });
+        started_rx.recv().unwrap();
+        let early = result_rx.recv_timeout(Duration::from_millis(100));
+        writer.write_all(&bytes[split..]).unwrap();
+        writer.sync_all().unwrap();
+        FileExt::unlock(&writer).unwrap();
+        let result =
+            early.unwrap_or_else(|_| result_rx.recv_timeout(Duration::from_secs(5)).unwrap());
+        reader.join().unwrap();
+        let events = result.expect("reader must not parse a writer's incomplete JSON record");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_id, "evt_1");
     }
 
     #[test]

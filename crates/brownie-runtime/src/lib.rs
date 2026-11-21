@@ -43302,92 +43302,105 @@ modes:
     #[test]
     fn task_run_parent_join_concurrent_admission_consumes_once() {
         let _guard = lock_env();
-        let temp = tempfile::tempdir().expect("tempdir");
-        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        for delay_micros in [0, 100, 500, 1_000, 5_000, 10_000, 25_000, 50_000, 100_000] {
+            let temp = tempfile::tempdir().expect("tempdir");
+            std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
 
-        let (parent_task_id, parent_run_id, child, _parent_event_count) =
-            start_parent_with_queued_child();
+            let (parent_task_id, parent_run_id, child, _parent_event_count) =
+                start_parent_with_queued_child();
 
-        let child_run = parse_line(&format!(
-            r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
-            child.task_id
-        ));
-        assert!(child_run.error.is_none());
+            let child_run = parse_line(&format!(
+                r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+                child.task_id
+            ));
+            assert!(child_run.error.is_none());
 
-        let request_a = format!(
-            r#"{{"jsonrpc":"2.0","id":4,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
-        );
-        let request_b = format!(
-            r#"{{"jsonrpc":"2.0","id":5,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
-        );
-        let handle_a = std::thread::spawn(move || parse_line(&request_a));
-        let handle_b = std::thread::spawn(move || parse_line(&request_b));
-        let responses = [
-            handle_a.join().expect("join parent run a"),
-            handle_b.join().expect("join parent run b"),
-        ];
-        let result_count = responses
-            .iter()
-            .filter(|response| response.result.is_some())
-            .count();
-        let error_count = responses
-            .iter()
-            .filter(|response| response.error.is_some())
-            .count();
-        assert!(result_count >= 1);
-        assert!(error_count <= 1);
-        assert_eq!(result_count + error_count, responses.len());
-        for result in responses
-            .iter()
-            .filter_map(|response| response.result.as_ref())
-        {
-            assert_eq!(result["status"], "Completed");
-        }
-        for error in responses
-            .iter()
-            .filter_map(|response| response.error.as_ref())
-        {
-            assert_eq!(error.code, -32602);
-        }
-
-        let store = BrownieStore::new(temp.path());
-        let parent_events = store
-            .tasks()
-            .read_ledger_events(&parent_run_id)
-            .expect("parent events");
-        assert!(
-            parent_events
-                .iter()
-                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
-                .count()
-                >= 2
-        );
-        assert_eq!(
-            parent_events
-                .iter()
-                .filter(|event| {
-                    event.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+            let handles = (0..8)
+                .map(|index| {
+                    let task_id = parent_task_id.clone();
+                    let barrier = barrier.clone();
+                    std::thread::spawn(move || {
+                        barrier.wait();
+                        if index != 0 {
+                            std::thread::sleep(std::time::Duration::from_micros(delay_micros));
+                        }
+                        parse_line(
+                            &json!({"jsonrpc":"2.0", "id":index + 4, "method":"task.run",
+                        "params":{"task_id":task_id}})
+                            .to_string(),
+                        )
+                    })
                 })
-                .count(),
-            1
-        );
-        assert_eq!(
-            parent_events
+                .collect::<Vec<_>>();
+            let responses = handles
+                .into_iter()
+                .map(|handle| handle.join().expect("join parent run"))
+                .collect::<Vec<_>>();
+            let result_count = responses
                 .iter()
-                .filter(
-                    |event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded
-                )
-                .filter_map(|event| event.payload.as_ref())
-                .filter(|payload| {
-                    payload
-                        .get("continuation_materialization")
-                        .and_then(Value::as_bool)
-                        == Some(true)
-                })
-                .count(),
-            1
-        );
-        assert_eq!(
+                .filter(|response| response.result.is_some())
+                .count();
+            let error_count = responses
+                .iter()
+                .filter(|response| response.error.is_some())
+                .count();
+            assert!(result_count >= 1);
+            assert!(error_count < responses.len());
+            assert_eq!(result_count + error_count, responses.len());
+            for result in responses
+                .iter()
+                .filter_map(|response| response.result.as_ref())
+            {
+                assert_eq!(result["status"], "Completed");
+            }
+            for error in responses
+                .iter()
+                .filter_map(|response| response.error.as_ref())
+            {
+                assert_eq!(
+                    error.code, -32602,
+                    "concurrent parent admission at {delay_micros}us: {error:?}"
+                );
+            }
+
+            let store = BrownieStore::new(temp.path());
+            let parent_events = store
+                .tasks()
+                .read_ledger_events(&parent_run_id)
+                .expect("parent events");
+            assert!(
+                parent_events
+                    .iter()
+                    .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                    .count()
+                    >= 2
+            );
+            assert_eq!(
+                parent_events
+                    .iter()
+                    .filter(|event| {
+                        event.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed
+                    })
+                    .count(),
+                1
+            );
+            assert_eq!(
+                parent_events
+                    .iter()
+                    .filter(|event| event.kind
+                        == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded)
+                    .filter_map(|event| event.payload.as_ref())
+                    .filter(|payload| {
+                        payload
+                            .get("continuation_materialization")
+                            .and_then(Value::as_bool)
+                            == Some(true)
+                    })
+                    .count(),
+                1
+            );
+            assert_eq!(
             store
                 .tasks()
                 .list_tasks()
@@ -43398,7 +43411,8 @@ modes:
             2
         );
 
-        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+            std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        }
     }
 
     #[test]
