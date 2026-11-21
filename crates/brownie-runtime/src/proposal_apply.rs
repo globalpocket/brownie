@@ -1,6 +1,6 @@
 use super::*;
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[path = "proposal_apply_recovery.rs"]
 mod replacement_recovery;
 
@@ -91,6 +91,8 @@ fn record_apply_result(
         .filter(|check| check.status == "Blocked")
         .map(|check| check.name.clone())
         .collect();
+    #[cfg(any(unix, windows))]
+    replacement_recovery::retain_recorded_result(store, run_id, proposal_id, &apply_result)?;
     let mut payload = json!({
         "proposal_id": proposal_id,
         "apply_id": &apply_result.apply_id,
@@ -444,12 +446,14 @@ struct AtomicCreateOutcome {
     failure_reason: Option<&'static str>,
 }
 
+#[cfg(not(any(unix, windows)))]
 struct PreparedAtomicCreate {
     temp_file: tempfile::NamedTempFile,
     parent_path: PathBuf,
     target_path: PathBuf,
 }
 
+#[cfg(not(any(unix, windows)))]
 struct PreparedAtomicCreateOutcome {
     prepared: Option<PreparedAtomicCreate>,
     temp_file_cleaned: bool,
@@ -462,6 +466,7 @@ struct AtomicDeleteOutcome {
     failure_reason: Option<&'static str>,
 }
 
+#[cfg(not(any(unix, windows)))]
 fn atomic_create_new_file(target: &Path, content_bytes: &[u8]) -> AtomicCreateOutcome {
     let Some(parent) = target.parent() else {
         return AtomicCreateOutcome {
@@ -545,6 +550,7 @@ fn atomic_create_new_file(target: &Path, content_bytes: &[u8]) -> AtomicCreateOu
     }
 }
 
+#[cfg(not(any(unix, windows)))]
 fn prepare_atomic_create_new_file(
     target: &Path,
     content_bytes: &[u8],
@@ -593,6 +599,7 @@ fn prepare_atomic_create_new_file(
     }
 }
 
+#[cfg(not(any(unix, windows)))]
 fn commit_prepared_atomic_create(prepared: PreparedAtomicCreate) -> AtomicCreateOutcome {
     match prepared.temp_file.persist_noclobber(&prepared.target_path) {
         Ok(persisted_file) => {
@@ -722,8 +729,13 @@ fn commit_prepared_atomic_replace(
             failure_reason: Some("Atomic replacement failed."),
         };
     }
-    if let Ok(parent_dir) = std::fs::File::open(&prepared.parent_path) {
-        let _ = parent_dir.sync_all();
+    if brownie_store::sync_directory_metadata(&prepared.parent_path).is_err() {
+        return AtomicReplaceOutcome {
+            post_write_sha256: None,
+            temp_file_cleaned: true,
+            atomic_replacement_completed: true,
+            failure_reason: Some("Parent directory sync failed after atomic replacement."),
+        };
     }
     let post_write_bytes = match std::fs::read(target) {
         Ok(bytes) => bytes,
@@ -744,6 +756,7 @@ fn commit_prepared_atomic_replace(
     }
 }
 
+#[cfg(not(any(unix, windows)))]
 fn atomic_replace_existing_file(target: &Path, replacement_bytes: &[u8]) -> AtomicReplaceOutcome {
     let prepared_outcome = prepare_atomic_replace_existing_file(target, replacement_bytes);
     let Some(prepared) = prepared_outcome.prepared else {
@@ -757,6 +770,7 @@ fn atomic_replace_existing_file(target: &Path, replacement_bytes: &[u8]) -> Atom
     commit_prepared_atomic_replace(prepared, target)
 }
 
+#[cfg(not(any(unix, windows)))]
 fn atomic_delete_existing_file(target: &Path) -> AtomicDeleteOutcome {
     let Some(parent) = target.parent() else {
         return AtomicDeleteOutcome {
@@ -845,6 +859,14 @@ fn apply_create_file_proposal(
         "Pass",
         None,
     ));
+
+    #[cfg(any(unix, windows))]
+    if let Some(result) = replacement_recovery::recover(store, task, params, proposal)? {
+        return Ok((
+            inspect_proposal(store, &params.run_id, &params.proposal_id)?,
+            result,
+        ));
+    }
 
     let Some(previous_snapshot) = proposal.latest_snapshot.as_ref() else {
         apply_result.checklist.push(apply_result_check(
@@ -1017,6 +1039,57 @@ fn apply_create_file_proposal(
     ));
 
     let expected_post_write_hash = format!("sha256:{}", hex_sha256(content_bytes));
+    #[cfg(any(unix, windows))]
+    let (outcome, recovery_prepared) = {
+        let prepared = prepare_atomic_replace_existing_file(&target_path, content_bytes);
+        if let Some(prepared) = prepared.prepared {
+            replacement_recovery::prepare(
+                store,
+                task,
+                params,
+                proposal,
+                &target_path,
+                &prepared,
+                &apply_result,
+            )?;
+            #[cfg(test)]
+            replacement_recovery::crash_boundary("before");
+            // hard_link atomically refuses an existing destination, while preserving
+            // the same inode as our retained witness for exact recovery.
+            let created = std::fs::hard_link(&prepared.temp_path, &target_path);
+            if created.is_ok() {
+                brownie_store::sync_directory_metadata(&prepared.parent_path)
+                    .map_err(|e| format!("create parent sync failed: {e}"))?;
+                #[cfg(test)]
+                replacement_recovery::crash_boundary("after");
+            }
+            let post = created
+                .as_ref()
+                .ok()
+                .and_then(|_| std::fs::read(&target_path).ok())
+                .map(|bytes| format!("sha256:{}", hex_sha256(&bytes)));
+            (
+                AtomicCreateOutcome {
+                    post_write_sha256: post,
+                    temp_file_cleaned: false,
+                    atomic_create_completed: created.is_ok(),
+                    failure_reason: created.err().map(|_| "Atomic create failed."),
+                },
+                true,
+            )
+        } else {
+            (
+                AtomicCreateOutcome {
+                    post_write_sha256: None,
+                    temp_file_cleaned: prepared.temp_file_cleaned,
+                    atomic_create_completed: false,
+                    failure_reason: prepared.failure_reason,
+                },
+                false,
+            )
+        }
+    };
+    #[cfg(not(any(unix, windows)))]
     let outcome = atomic_create_new_file(&target_path, content_bytes);
     apply_result.temp_file_cleaned = outcome.temp_file_cleaned;
     apply_result.atomic_create_completed = outcome.atomic_create_completed;
@@ -1121,13 +1194,20 @@ fn apply_create_file_proposal(
     apply_result.authorization_consumed = true;
     apply_result.applied = true;
     apply_result.applied_at = Some(now_rfc3339());
-    record_apply_result(
+    let recorded = record_apply_result(
         store,
         task,
         &params.run_id,
         &params.proposal_id,
         apply_result,
-    )
+    )?;
+    #[cfg(any(unix, windows))]
+    if recovery_prepared {
+        #[cfg(test)]
+        replacement_recovery::crash_boundary("recorded");
+        replacement_recovery::finish(store, task, params)?;
+    }
+    Ok(recorded)
 }
 
 fn apply_delete_file_proposal(
@@ -1259,6 +1339,14 @@ fn apply_delete_file_proposal(
         "Pass",
         None,
     ));
+
+    #[cfg(any(unix, windows))]
+    if let Some(result) = replacement_recovery::recover(store, task, params, proposal)? {
+        return Ok((
+            inspect_proposal(store, &params.run_id, &params.proposal_id)?,
+            result,
+        ));
+    }
 
     let Some(previous_snapshot) = proposal.latest_snapshot.as_ref() else {
         apply_result.checklist.push(apply_result_check(
@@ -1521,6 +1609,47 @@ fn apply_delete_file_proposal(
         None,
     ));
 
+    #[cfg(any(unix, windows))]
+    let outcome = {
+        let parent = target_path.parent().ok_or("missing target parent")?;
+        let name = target_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or("invalid target name")?;
+        let prepared = PreparedAtomicReplace {
+            temp_path: parent.join(format!(
+                ".{name}.brownie-apply-{}.tmp",
+                uuid::Uuid::new_v4().simple()
+            )),
+            parent_path: parent.to_path_buf(),
+        };
+        replacement_recovery::prepare(
+            store,
+            task,
+            params,
+            proposal,
+            &target_path,
+            &prepared,
+            &apply_result,
+        )?;
+        #[cfg(test)]
+        replacement_recovery::crash_boundary("before");
+        if std::fs::symlink_metadata(&prepared.temp_path).is_ok() {
+            return Err("delete staging already exists".into());
+        }
+        std::fs::rename(&target_path, &prepared.temp_path)
+            .map_err(|e| format!("delete rename failed: {e}"))?;
+        brownie_store::sync_directory_metadata(parent)
+            .map_err(|e| format!("delete parent sync failed: {e}"))?;
+        #[cfg(test)]
+        replacement_recovery::crash_boundary("after");
+        AtomicDeleteOutcome {
+            atomic_delete_completed: true,
+            post_delete_target_exists: Some(false),
+            failure_reason: None,
+        }
+    };
+    #[cfg(not(any(unix, windows)))]
     let outcome = atomic_delete_existing_file(&target_path);
     apply_result.atomic_delete_completed = outcome.atomic_delete_completed;
     apply_result.post_delete_target_exists = outcome.post_delete_target_exists;
@@ -1582,13 +1711,20 @@ fn apply_delete_file_proposal(
     apply_result.authorization_consumed = true;
     apply_result.applied = true;
     apply_result.applied_at = Some(now_rfc3339());
-    record_apply_result(
+    let recorded = record_apply_result(
         store,
         task,
         &params.run_id,
         &params.proposal_id,
         apply_result,
-    )
+    )?;
+    #[cfg(any(unix, windows))]
+    {
+        #[cfg(test)]
+        replacement_recovery::crash_boundary("recorded");
+        replacement_recovery::finish(store, task, params)?;
+    }
+    Ok(recorded)
 }
 
 fn deny_patch_file_apply(
@@ -1838,6 +1974,14 @@ fn apply_patch_file_proposal(
         None,
     ));
 
+    #[cfg(any(unix, windows))]
+    if let Some(result) = replacement_recovery::recover(store, task, params, proposal)? {
+        return Ok((
+            inspect_proposal(store, &params.run_id, &params.proposal_id)?,
+            result,
+        ));
+    }
+
     let Some(previous_snapshot) = proposal.latest_snapshot.as_ref() else {
         return deny_patch_file_apply(
             store,
@@ -2018,6 +2162,45 @@ fn apply_patch_file_proposal(
 
     let replacement_bytes = replacement_content.as_bytes();
     let expected_post_write_hash = format!("sha256:{}", hex_sha256(replacement_bytes));
+    #[cfg(any(unix, windows))]
+    let mut recovery_witness = None;
+    #[cfg(any(unix, windows))]
+    let outcome = {
+        let prepared = prepare_atomic_replace_existing_file(&target_path, replacement_bytes);
+        if let Some(prepared) = prepared.prepared {
+            match replacement_recovery::prepare(
+                store,
+                task,
+                params,
+                proposal,
+                &target_path,
+                &prepared,
+                &apply_result,
+            ) {
+                Ok(witness) => recovery_witness = Some(witness),
+                Err(error) => {
+                    cleanup_atomic_replace_temp(&prepared.temp_path);
+                    return Err(error);
+                }
+            }
+            #[cfg(test)]
+            replacement_recovery::crash_boundary("before");
+            let outcome = commit_prepared_atomic_replace(prepared, &target_path);
+            #[cfg(test)]
+            if outcome.atomic_replacement_completed {
+                replacement_recovery::crash_boundary("after");
+            }
+            outcome
+        } else {
+            AtomicReplaceOutcome {
+                post_write_sha256: None,
+                temp_file_cleaned: prepared.temp_file_cleaned,
+                atomic_replacement_completed: false,
+                failure_reason: prepared.failure_reason,
+            }
+        }
+    };
+    #[cfg(not(any(unix, windows)))]
     let outcome = atomic_replace_existing_file(&target_path, replacement_bytes);
     apply_result.temp_file_cleaned = outcome.temp_file_cleaned;
     apply_result.atomic_replacement_completed = outcome.atomic_replacement_completed;
@@ -2119,13 +2302,20 @@ fn apply_patch_file_proposal(
     apply_result.authorization_consumed = true;
     apply_result.applied = true;
     apply_result.applied_at = Some(now_rfc3339());
-    record_apply_result(
+    let recorded = record_apply_result(
         store,
         task,
         &params.run_id,
         &params.proposal_id,
         apply_result,
-    )
+    )?;
+    #[cfg(any(unix, windows))]
+    if recovery_witness.is_some() {
+        #[cfg(test)]
+        replacement_recovery::crash_boundary("recorded");
+        replacement_recovery::finish(store, task, params)?;
+    }
+    Ok(recorded)
 }
 
 struct PreparedReplaceTransactionItem {
@@ -2429,7 +2619,7 @@ fn apply_replace_file_transaction_recovery(
         .as_ref()
         .ok_or_else(|| "invalid params: transaction_recovery_source is required".to_string())?;
     let proposal_id_for_result = fallback_transaction_proposal_id(params);
-    let first_proposal = inspect_proposal(store, &params.run_id, &proposal_id_for_result)?;
+    let _first_proposal = inspect_proposal(store, &params.run_id, &proposal_id_for_result)?;
     let mut apply_result = WorkspacePatchApplyResultSummary {
         proposal_id: proposal_id_for_result.clone(),
         apply_id: format!("apply_{}", uuid::Uuid::new_v4().simple()),
@@ -2964,103 +3154,116 @@ fn apply_replace_file_transaction_recovery(
         None,
     ));
 
-    for (item, prepared_replacement) in prepared_items.iter().zip(prepared_replacements) {
-        let expected_post_write_hash = format!("sha256:{}", hex_sha256(&item.replacement_bytes));
-        let outcome = commit_prepared_atomic_replace(prepared_replacement, &item.target_path);
-        apply_result.temp_file_cleaned =
-            apply_result.temp_file_cleaned && outcome.temp_file_cleaned;
-        if let Some(reason) = outcome.failure_reason {
-            apply_result.transaction_items.push(transaction_item_result(
-                item,
-                "Failed",
-                reason,
-                outcome.post_write_sha256,
-                outcome.atomic_replacement_completed,
-                false,
-                outcome.temp_file_cleaned,
-            ));
-            apply_result.apply_status = "Failed".to_string();
-            apply_result.apply_reason = reason.to_string();
-            apply_result.transaction_status = Some("PartialFailed".to_string());
-            apply_result.transaction_recovery_status = Some("PartialFailed".to_string());
-            apply_result.checklist.push(apply_result_check(
-                "transaction_recovery_atomic_replacements_completed",
-                "Fail",
-                Some(reason),
-            ));
-            return record_apply_result(
-                store,
-                &task,
-                &params.run_id,
-                &proposal_id_for_result,
-                apply_result,
-            );
-        }
-        if outcome.post_write_sha256.as_deref() != Some(expected_post_write_hash.as_str()) {
-            apply_result.transaction_items.push(transaction_item_result(
-                item,
-                "Failed",
-                "Post-write SHA-256 does not match replacement content.",
-                outcome.post_write_sha256,
-                outcome.atomic_replacement_completed,
-                false,
-                outcome.temp_file_cleaned,
-            ));
-            apply_result.apply_status = "Failed".to_string();
-            apply_result.apply_reason =
-                "Post-write SHA-256 does not match replacement content.".to_string();
-            apply_result.transaction_status = Some("PartialFailed".to_string());
-            apply_result.transaction_recovery_status = Some("PartialFailed".to_string());
-            apply_result.checklist.push(apply_result_check(
-                "transaction_recovery_post_write_sha256_verified",
-                "Fail",
-                Some("Post-write SHA-256 does not match replacement content."),
-            ));
-            return record_apply_result(
-                store,
-                &task,
-                &params.run_id,
-                &proposal_id_for_result,
-                apply_result,
-            );
-        }
-        apply_result.transaction_items.push(transaction_item_result(
-            item,
-            "Applied",
-            "File recovered and post-write SHA-256 verified.",
-            outcome.post_write_sha256.clone(),
-            outcome.atomic_replacement_completed,
-            true,
-            outcome.temp_file_cleaned,
-        ));
-    }
-    apply_result.checklist.push(apply_result_check(
-        "transaction_recovery_atomic_replacements_completed",
-        "Pass",
-        None,
-    ));
-    apply_result.checklist.push(apply_result_check(
-        "transaction_recovery_post_write_sha256_verified",
-        "Pass",
-        None,
-    ));
-    apply_result.apply_status = "Applied".to_string();
-    apply_result.apply_reason =
-        "Transaction recovery applied and all post-write SHA-256 values verified.".to_string();
-    apply_result.transaction_status = Some("Applied".to_string());
-    apply_result.transaction_recovery_status = Some("Applied".to_string());
-    apply_result.atomic_replacement_completed = true;
-    apply_result.authorization_consumed = true;
-    apply_result.applied = true;
-    apply_result.applied_at = Some(now_rfc3339());
-    record_apply_result(
+    #[cfg(any(unix, windows))]
+    return replacement_recovery::begin_replace_transaction(
         store,
         &task,
-        &params.run_id,
-        &proposal_id_for_result,
+        params,
         apply_result,
-    )
-    .map(|(_, result)| (first_proposal, result))
+        &prepared_items,
+        prepared_replacements,
+    );
+    #[cfg(not(any(unix, windows)))]
+    {
+        for (item, prepared_replacement) in prepared_items.iter().zip(prepared_replacements) {
+            let expected_post_write_hash =
+                format!("sha256:{}", hex_sha256(&item.replacement_bytes));
+            let outcome = commit_prepared_atomic_replace(prepared_replacement, &item.target_path);
+            apply_result.temp_file_cleaned =
+                apply_result.temp_file_cleaned && outcome.temp_file_cleaned;
+            if let Some(reason) = outcome.failure_reason {
+                apply_result.transaction_items.push(transaction_item_result(
+                    item,
+                    "Failed",
+                    reason,
+                    outcome.post_write_sha256,
+                    outcome.atomic_replacement_completed,
+                    false,
+                    outcome.temp_file_cleaned,
+                ));
+                apply_result.apply_status = "Failed".to_string();
+                apply_result.apply_reason = reason.to_string();
+                apply_result.transaction_status = Some("PartialFailed".to_string());
+                apply_result.transaction_recovery_status = Some("PartialFailed".to_string());
+                apply_result.checklist.push(apply_result_check(
+                    "transaction_recovery_atomic_replacements_completed",
+                    "Fail",
+                    Some(reason),
+                ));
+                return record_apply_result(
+                    store,
+                    &task,
+                    &params.run_id,
+                    &proposal_id_for_result,
+                    apply_result,
+                );
+            }
+            if outcome.post_write_sha256.as_deref() != Some(expected_post_write_hash.as_str()) {
+                apply_result.transaction_items.push(transaction_item_result(
+                    item,
+                    "Failed",
+                    "Post-write SHA-256 does not match replacement content.",
+                    outcome.post_write_sha256,
+                    outcome.atomic_replacement_completed,
+                    false,
+                    outcome.temp_file_cleaned,
+                ));
+                apply_result.apply_status = "Failed".to_string();
+                apply_result.apply_reason =
+                    "Post-write SHA-256 does not match replacement content.".to_string();
+                apply_result.transaction_status = Some("PartialFailed".to_string());
+                apply_result.transaction_recovery_status = Some("PartialFailed".to_string());
+                apply_result.checklist.push(apply_result_check(
+                    "transaction_recovery_post_write_sha256_verified",
+                    "Fail",
+                    Some("Post-write SHA-256 does not match replacement content."),
+                ));
+                return record_apply_result(
+                    store,
+                    &task,
+                    &params.run_id,
+                    &proposal_id_for_result,
+                    apply_result,
+                );
+            }
+            apply_result.transaction_items.push(transaction_item_result(
+                item,
+                "Applied",
+                "File recovered and post-write SHA-256 verified.",
+                outcome.post_write_sha256.clone(),
+                outcome.atomic_replacement_completed,
+                true,
+                outcome.temp_file_cleaned,
+            ));
+        }
+        apply_result.checklist.push(apply_result_check(
+            "transaction_recovery_atomic_replacements_completed",
+            "Pass",
+            None,
+        ));
+        apply_result.checklist.push(apply_result_check(
+            "transaction_recovery_post_write_sha256_verified",
+            "Pass",
+            None,
+        ));
+        apply_result.apply_status = "Applied".to_string();
+        apply_result.apply_reason =
+            "Transaction recovery applied and all post-write SHA-256 values verified.".to_string();
+        apply_result.transaction_status = Some("Applied".to_string());
+        apply_result.transaction_recovery_status = Some("Applied".to_string());
+        apply_result.atomic_replacement_completed = true;
+        apply_result.authorization_consumed = true;
+        apply_result.applied = true;
+        apply_result.applied_at = Some(now_rfc3339());
+        record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &proposal_id_for_result,
+            apply_result,
+        )
+        .map(|(_, result)| (_first_proposal, result))
+    }
 }
 
 fn apply_create_file_transaction_recovery(
@@ -3087,7 +3290,7 @@ fn apply_create_file_transaction_recovery(
         .as_ref()
         .ok_or_else(|| "invalid params: transaction_recovery_source is required".to_string())?;
     let proposal_id_for_result = fallback_transaction_proposal_id(params);
-    let first_proposal = inspect_proposal(store, &params.run_id, &proposal_id_for_result)?;
+    let _first_proposal = inspect_proposal(store, &params.run_id, &proposal_id_for_result)?;
     let mut apply_result = WorkspacePatchApplyResultSummary {
         proposal_id: proposal_id_for_result.clone(),
         apply_id: format!("apply_{}", uuid::Uuid::new_v4().simple()),
@@ -3553,86 +3756,44 @@ fn apply_create_file_transaction_recovery(
         None,
     ));
 
-    let mut prepared_creates = Vec::new();
-    for item in &prepared_items {
-        let prepared = prepare_atomic_create_new_file(&item.target_path, &item.replacement_bytes);
-        if let Some(prepared) = prepared.prepared {
-            prepared_creates.push(prepared);
-            continue;
-        }
-        let reason = prepared
-            .failure_reason
-            .unwrap_or("Temporary sibling file preparation failed.");
-        apply_result
-            .transaction_items
-            .push(create_transaction_item_result(
-                item,
-                "Failed",
-                reason,
-                None,
-                false,
-                false,
-                prepared.temp_file_cleaned,
-            ));
-        apply_result.apply_status = "Failed".to_string();
-        apply_result.apply_reason = reason.to_string();
-        apply_result.transaction_status = Some("Failed".to_string());
-        apply_result.transaction_recovery_status = Some("Failed".to_string());
-        apply_result.checklist.push(apply_result_check(
-            "transaction_recovery_temporary_sibling_files_created",
-            "Fail",
-            Some(reason),
-        ));
-        return record_apply_result(
-            store,
-            &task,
-            &params.run_id,
-            &proposal_id_for_result,
-            apply_result,
-        )
-        .map(|(_, result)| (first_proposal, result));
-    }
-    apply_result.checklist.push(apply_result_check(
-        "transaction_recovery_temporary_sibling_files_created",
-        "Pass",
-        None,
-    ));
-
-    for (item, prepared_create) in prepared_items.iter().zip(prepared_creates) {
-        let expected_post_write_hash = format!("sha256:{}", hex_sha256(&item.replacement_bytes));
-        let outcome = commit_prepared_atomic_create(prepared_create);
-        apply_result.temp_file_cleaned =
-            apply_result.temp_file_cleaned && outcome.temp_file_cleaned;
-        if let Some(reason) = outcome.failure_reason {
+    #[cfg(any(unix, windows))]
+    return replacement_recovery::begin_create_transaction(
+        store,
+        &task,
+        params,
+        apply_result,
+        &prepared_items,
+    );
+    #[cfg(not(any(unix, windows)))]
+    {
+        let mut prepared_creates = Vec::new();
+        for item in &prepared_items {
+            let prepared =
+                prepare_atomic_create_new_file(&item.target_path, &item.replacement_bytes);
+            if let Some(prepared) = prepared.prepared {
+                prepared_creates.push(prepared);
+                continue;
+            }
+            let reason = prepared
+                .failure_reason
+                .unwrap_or("Temporary sibling file preparation failed.");
             apply_result
                 .transaction_items
                 .push(create_transaction_item_result(
                     item,
-                    if reason == "Target path already exists." {
-                        "Denied"
-                    } else {
-                        "Failed"
-                    },
+                    "Failed",
                     reason,
-                    outcome.post_write_sha256,
-                    outcome.atomic_create_completed,
+                    None,
                     false,
-                    outcome.temp_file_cleaned,
+                    false,
+                    prepared.temp_file_cleaned,
                 ));
-            apply_result.apply_status = if reason == "Target path already exists." {
-                "Denied".to_string()
-            } else {
-                "Failed".to_string()
-            };
+            apply_result.apply_status = "Failed".to_string();
             apply_result.apply_reason = reason.to_string();
-            apply_result.transaction_status = Some(if apply_result.transaction_items.len() > 1 {
-                "PartialFailed".to_string()
-            } else {
-                apply_result.apply_status.clone()
-            });
-            apply_result.transaction_recovery_status = Some(apply_result.apply_status.clone());
+            apply_result.transaction_status = Some("Failed".to_string());
+            apply_result.transaction_recovery_status = Some("Failed".to_string());
             apply_result.checklist.push(apply_result_check(
-                "transaction_recovery_atomic_creates_completed",
+                "transaction_recovery_temporary_sibling_files_created",
                 "Fail",
                 Some(reason),
             ));
@@ -3643,79 +3804,135 @@ fn apply_create_file_transaction_recovery(
                 &proposal_id_for_result,
                 apply_result,
             )
-            .map(|(_, result)| (first_proposal, result));
+            .map(|(_, result)| (_first_proposal, result));
         }
-        if outcome.post_write_sha256.as_deref() != Some(expected_post_write_hash.as_str()) {
+        apply_result.checklist.push(apply_result_check(
+            "transaction_recovery_temporary_sibling_files_created",
+            "Pass",
+            None,
+        ));
+
+        for (item, prepared_create) in prepared_items.iter().zip(prepared_creates) {
+            let expected_post_write_hash =
+                format!("sha256:{}", hex_sha256(&item.replacement_bytes));
+            let outcome = commit_prepared_atomic_create(prepared_create);
+            apply_result.temp_file_cleaned =
+                apply_result.temp_file_cleaned && outcome.temp_file_cleaned;
+            if let Some(reason) = outcome.failure_reason {
+                apply_result
+                    .transaction_items
+                    .push(create_transaction_item_result(
+                        item,
+                        if reason == "Target path already exists." {
+                            "Denied"
+                        } else {
+                            "Failed"
+                        },
+                        reason,
+                        outcome.post_write_sha256,
+                        outcome.atomic_create_completed,
+                        false,
+                        outcome.temp_file_cleaned,
+                    ));
+                apply_result.apply_status = if reason == "Target path already exists." {
+                    "Denied".to_string()
+                } else {
+                    "Failed".to_string()
+                };
+                apply_result.apply_reason = reason.to_string();
+                apply_result.transaction_status =
+                    Some(if apply_result.transaction_items.len() > 1 {
+                        "PartialFailed".to_string()
+                    } else {
+                        apply_result.apply_status.clone()
+                    });
+                apply_result.transaction_recovery_status = Some(apply_result.apply_status.clone());
+                apply_result.checklist.push(apply_result_check(
+                    "transaction_recovery_atomic_creates_completed",
+                    "Fail",
+                    Some(reason),
+                ));
+                return record_apply_result(
+                    store,
+                    &task,
+                    &params.run_id,
+                    &proposal_id_for_result,
+                    apply_result,
+                )
+                .map(|(_, result)| (_first_proposal, result));
+            }
+            if outcome.post_write_sha256.as_deref() != Some(expected_post_write_hash.as_str()) {
+                apply_result
+                    .transaction_items
+                    .push(create_transaction_item_result(
+                        item,
+                        "Failed",
+                        "Post-write SHA-256 does not match replacement content.",
+                        outcome.post_write_sha256,
+                        outcome.atomic_create_completed,
+                        false,
+                        outcome.temp_file_cleaned,
+                    ));
+                apply_result.apply_status = "Failed".to_string();
+                apply_result.apply_reason =
+                    "Post-write SHA-256 does not match replacement content.".to_string();
+                apply_result.transaction_status = Some("PartialFailed".to_string());
+                apply_result.transaction_recovery_status = Some("Failed".to_string());
+                apply_result.checklist.push(apply_result_check(
+                    "transaction_recovery_post_write_sha256_verified",
+                    "Fail",
+                    Some("Post-write SHA-256 does not match replacement content."),
+                ));
+                return record_apply_result(
+                    store,
+                    &task,
+                    &params.run_id,
+                    &proposal_id_for_result,
+                    apply_result,
+                )
+                .map(|(_, result)| (_first_proposal, result));
+            }
             apply_result
                 .transaction_items
                 .push(create_transaction_item_result(
                     item,
-                    "Failed",
-                    "Post-write SHA-256 does not match replacement content.",
-                    outcome.post_write_sha256,
+                    "Applied",
+                    "File recovered and post-write SHA-256 verified.",
+                    outcome.post_write_sha256.clone(),
                     outcome.atomic_create_completed,
-                    false,
+                    true,
                     outcome.temp_file_cleaned,
                 ));
-            apply_result.apply_status = "Failed".to_string();
-            apply_result.apply_reason =
-                "Post-write SHA-256 does not match replacement content.".to_string();
-            apply_result.transaction_status = Some("PartialFailed".to_string());
-            apply_result.transaction_recovery_status = Some("Failed".to_string());
-            apply_result.checklist.push(apply_result_check(
-                "transaction_recovery_post_write_sha256_verified",
-                "Fail",
-                Some("Post-write SHA-256 does not match replacement content."),
-            ));
-            return record_apply_result(
-                store,
-                &task,
-                &params.run_id,
-                &proposal_id_for_result,
-                apply_result,
-            )
-            .map(|(_, result)| (first_proposal, result));
         }
-        apply_result
-            .transaction_items
-            .push(create_transaction_item_result(
-                item,
-                "Applied",
-                "File recovered and post-write SHA-256 verified.",
-                outcome.post_write_sha256.clone(),
-                outcome.atomic_create_completed,
-                true,
-                outcome.temp_file_cleaned,
-            ));
+        apply_result.checklist.push(apply_result_check(
+            "transaction_recovery_atomic_creates_completed",
+            "Pass",
+            None,
+        ));
+        apply_result.checklist.push(apply_result_check(
+            "transaction_recovery_post_write_sha256_verified",
+            "Pass",
+            None,
+        ));
+        apply_result.apply_status = "Applied".to_string();
+        apply_result.apply_reason =
+            "Create-file transaction recovery applied and all post-write SHA-256 values verified."
+                .to_string();
+        apply_result.transaction_status = Some("Applied".to_string());
+        apply_result.transaction_recovery_status = Some("Applied".to_string());
+        apply_result.atomic_create_completed = true;
+        apply_result.authorization_consumed = true;
+        apply_result.applied = true;
+        apply_result.applied_at = Some(now_rfc3339());
+        record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &proposal_id_for_result,
+            apply_result,
+        )
+        .map(|(_, result)| (_first_proposal, result))
     }
-    apply_result.checklist.push(apply_result_check(
-        "transaction_recovery_atomic_creates_completed",
-        "Pass",
-        None,
-    ));
-    apply_result.checklist.push(apply_result_check(
-        "transaction_recovery_post_write_sha256_verified",
-        "Pass",
-        None,
-    ));
-    apply_result.apply_status = "Applied".to_string();
-    apply_result.apply_reason =
-        "Create-file transaction recovery applied and all post-write SHA-256 values verified."
-            .to_string();
-    apply_result.transaction_status = Some("Applied".to_string());
-    apply_result.transaction_recovery_status = Some("Applied".to_string());
-    apply_result.atomic_create_completed = true;
-    apply_result.authorization_consumed = true;
-    apply_result.applied = true;
-    apply_result.applied_at = Some(now_rfc3339());
-    record_apply_result(
-        store,
-        &task,
-        &params.run_id,
-        &proposal_id_for_result,
-        apply_result,
-    )
-    .map(|(_, result)| (first_proposal, result))
 }
 
 fn apply_delete_file_transaction_recovery(
@@ -3742,7 +3959,7 @@ fn apply_delete_file_transaction_recovery(
         .as_ref()
         .ok_or_else(|| "invalid params: transaction_recovery_source is required".to_string())?;
     let proposal_id_for_result = fallback_transaction_proposal_id(params);
-    let first_proposal = inspect_proposal(store, &params.run_id, &proposal_id_for_result)?;
+    let _first_proposal = inspect_proposal(store, &params.run_id, &proposal_id_for_result)?;
     let mut apply_result = WorkspacePatchApplyResultSummary {
         proposal_id: proposal_id_for_result.clone(),
         apply_id: format!("apply_{}", uuid::Uuid::new_v4().simple()),
@@ -3812,7 +4029,7 @@ fn apply_delete_file_transaction_recovery(
             &proposal_id_for_result,
             result,
         )
-        .map(|(_, result)| (first_proposal.clone(), result))
+        .map(|(_, result)| (_first_proposal.clone(), result))
     };
 
     if !params.authorize {
@@ -3837,7 +4054,7 @@ fn apply_delete_file_transaction_recovery(
             &proposal_id_for_result,
             apply_result,
         )
-        .map(|(_, result)| (first_proposal, result));
+        .map(|(_, result)| (_first_proposal, result));
     }
     if source.source_run_id != params.run_id {
         return deny(
@@ -4238,91 +4455,103 @@ fn apply_delete_file_transaction_recovery(
         None,
     ));
 
-    for item in &prepared_items {
-        let outcome = atomic_delete_existing_file(&item.target_path);
-        apply_result.atomic_delete_completed =
-            apply_result.atomic_delete_completed || outcome.atomic_delete_completed;
-        apply_result.post_delete_target_exists = outcome.post_delete_target_exists;
-        if let Some(reason) = outcome.failure_reason {
+    #[cfg(any(unix, windows))]
+    return replacement_recovery::begin_delete_transaction(
+        store,
+        &task,
+        params,
+        apply_result,
+        &prepared_items,
+    );
+    #[cfg(not(any(unix, windows)))]
+    {
+        for item in &prepared_items {
+            let outcome = atomic_delete_existing_file(&item.target_path);
+            apply_result.atomic_delete_completed =
+                apply_result.atomic_delete_completed || outcome.atomic_delete_completed;
+            apply_result.post_delete_target_exists = outcome.post_delete_target_exists;
+            if let Some(reason) = outcome.failure_reason {
+                apply_result
+                    .transaction_items
+                    .push(delete_transaction_item_result(
+                        item,
+                        "Failed",
+                        reason,
+                        outcome.post_delete_target_exists,
+                        outcome.atomic_delete_completed,
+                        false,
+                        true,
+                    ));
+                apply_result.apply_status = "Failed".to_string();
+                apply_result.apply_reason = reason.to_string();
+                apply_result.transaction_status =
+                    Some(if apply_result.transaction_items.len() > 1 {
+                        "PartialFailed".to_string()
+                    } else {
+                        "Failed".to_string()
+                    });
+                apply_result.transaction_recovery_status = Some(
+                    apply_result
+                        .transaction_status
+                        .clone()
+                        .unwrap_or_else(|| "Failed".into()),
+                );
+                apply_result.checklist.push(apply_result_check(
+                    "transaction_recovery_atomic_deletes_completed",
+                    "Fail",
+                    Some(reason),
+                ));
+                return record_apply_result(
+                    store,
+                    &task,
+                    &params.run_id,
+                    &proposal_id_for_result,
+                    apply_result,
+                )
+                .map(|(_, result)| (_first_proposal, result));
+            }
             apply_result
                 .transaction_items
                 .push(delete_transaction_item_result(
                     item,
-                    "Failed",
-                    reason,
+                    "Applied",
+                    "File recovered by delete and post-delete absence verified.",
                     outcome.post_delete_target_exists,
                     outcome.atomic_delete_completed,
-                    false,
+                    true,
                     true,
                 ));
-            apply_result.apply_status = "Failed".to_string();
-            apply_result.apply_reason = reason.to_string();
-            apply_result.transaction_status = Some(if apply_result.transaction_items.len() > 1 {
-                "PartialFailed".to_string()
-            } else {
-                "Failed".to_string()
-            });
-            apply_result.transaction_recovery_status = Some(
-                apply_result
-                    .transaction_status
-                    .clone()
-                    .unwrap_or_else(|| "Failed".into()),
-            );
-            apply_result.checklist.push(apply_result_check(
-                "transaction_recovery_atomic_deletes_completed",
-                "Fail",
-                Some(reason),
-            ));
-            return record_apply_result(
-                store,
-                &task,
-                &params.run_id,
-                &proposal_id_for_result,
-                apply_result,
-            )
-            .map(|(_, result)| (first_proposal, result));
         }
-        apply_result
-            .transaction_items
-            .push(delete_transaction_item_result(
-                item,
-                "Applied",
-                "File recovered by delete and post-delete absence verified.",
-                outcome.post_delete_target_exists,
-                outcome.atomic_delete_completed,
-                true,
-                true,
-            ));
+        apply_result.checklist.push(apply_result_check(
+            "transaction_recovery_atomic_deletes_completed",
+            "Pass",
+            None,
+        ));
+        apply_result.checklist.push(apply_result_check(
+            "transaction_recovery_post_delete_absence_verified",
+            "Pass",
+            None,
+        ));
+        apply_result.apply_status = "Applied".to_string();
+        apply_result.apply_reason =
+            "Delete-file transaction recovery applied and all post-delete absence checks passed."
+                .to_string();
+        apply_result.transaction_status = Some("Applied".to_string());
+        apply_result.transaction_recovery_status = Some("Applied".to_string());
+        apply_result.atomic_delete_completed = true;
+        apply_result.post_delete_target_exists = Some(false);
+        apply_result.authorization_consumed = true;
+        apply_result.applied = true;
+        apply_result.applied_at = Some(now_rfc3339());
+        record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &proposal_id_for_result,
+            apply_result,
+        )
+        .map(|(_, result)| (_first_proposal, result))
     }
-    apply_result.checklist.push(apply_result_check(
-        "transaction_recovery_atomic_deletes_completed",
-        "Pass",
-        None,
-    ));
-    apply_result.checklist.push(apply_result_check(
-        "transaction_recovery_post_delete_absence_verified",
-        "Pass",
-        None,
-    ));
-    apply_result.apply_status = "Applied".to_string();
-    apply_result.apply_reason =
-        "Delete-file transaction recovery applied and all post-delete absence checks passed."
-            .to_string();
-    apply_result.transaction_status = Some("Applied".to_string());
-    apply_result.transaction_recovery_status = Some("Applied".to_string());
-    apply_result.atomic_delete_completed = true;
-    apply_result.post_delete_target_exists = Some(false);
-    apply_result.authorization_consumed = true;
-    apply_result.applied = true;
-    apply_result.applied_at = Some(now_rfc3339());
-    record_apply_result(
-        store,
-        &task,
-        &params.run_id,
-        &proposal_id_for_result,
-        apply_result,
-    )
-    .map(|(_, result)| (first_proposal, result))
 }
 
 fn apply_replace_file_transaction(
@@ -4345,7 +4574,7 @@ fn apply_replace_file_transaction(
         .as_ref()
         .ok_or_else(|| "invalid params: transaction_items are required".to_string())?;
     let proposal_id_for_result = fallback_transaction_proposal_id(params);
-    let first_proposal = inspect_proposal(store, &params.run_id, &proposal_id_for_result)?;
+    let _first_proposal = inspect_proposal(store, &params.run_id, &proposal_id_for_result)?;
     let mut apply_result = WorkspacePatchApplyResultSummary {
         proposal_id: proposal_id_for_result.clone(),
         apply_id: format!("apply_{}", uuid::Uuid::new_v4().simple()),
@@ -4741,100 +4970,114 @@ fn apply_replace_file_transaction(
         None,
     ));
 
-    for (item, prepared_replacement) in prepared_items.iter().zip(prepared_replacements) {
-        let expected_post_write_hash = format!("sha256:{}", hex_sha256(&item.replacement_bytes));
-        let outcome = commit_prepared_atomic_replace(prepared_replacement, &item.target_path);
-        apply_result.temp_file_cleaned =
-            apply_result.temp_file_cleaned && outcome.temp_file_cleaned;
-        if let Some(reason) = outcome.failure_reason {
-            apply_result.transaction_items.push(transaction_item_result(
-                item,
-                "Failed",
-                reason,
-                outcome.post_write_sha256,
-                outcome.atomic_replacement_completed,
-                false,
-                outcome.temp_file_cleaned,
-            ));
-            apply_result.apply_status = "Failed".to_string();
-            apply_result.apply_reason = reason.to_string();
-            apply_result.transaction_status = Some("PartialFailed".to_string());
-            apply_result.checklist.push(apply_result_check(
-                "transaction_atomic_replacements_completed",
-                "Fail",
-                Some(reason),
-            ));
-            return record_apply_result(
-                store,
-                &task,
-                &params.run_id,
-                &proposal_id_for_result,
-                apply_result,
-            );
-        }
-        if outcome.post_write_sha256.as_deref() != Some(expected_post_write_hash.as_str()) {
-            apply_result.transaction_items.push(transaction_item_result(
-                item,
-                "Failed",
-                "Post-write SHA-256 does not match replacement content.",
-                outcome.post_write_sha256,
-                outcome.atomic_replacement_completed,
-                false,
-                outcome.temp_file_cleaned,
-            ));
-            apply_result.apply_status = "Failed".to_string();
-            apply_result.apply_reason =
-                "Post-write SHA-256 does not match replacement content.".to_string();
-            apply_result.transaction_status = Some("PartialFailed".to_string());
-            apply_result.checklist.push(apply_result_check(
-                "transaction_post_write_sha256_verified",
-                "Fail",
-                Some("Post-write SHA-256 does not match replacement content."),
-            ));
-            return record_apply_result(
-                store,
-                &task,
-                &params.run_id,
-                &proposal_id_for_result,
-                apply_result,
-            );
-        }
-        apply_result.transaction_items.push(transaction_item_result(
-            item,
-            "Applied",
-            "File replaced and post-write SHA-256 verified.",
-            outcome.post_write_sha256.clone(),
-            outcome.atomic_replacement_completed,
-            true,
-            outcome.temp_file_cleaned,
-        ));
-    }
-    apply_result.checklist.push(apply_result_check(
-        "transaction_atomic_replacements_completed",
-        "Pass",
-        None,
-    ));
-    apply_result.checklist.push(apply_result_check(
-        "transaction_post_write_sha256_verified",
-        "Pass",
-        None,
-    ));
-    apply_result.apply_status = "Applied".to_string();
-    apply_result.apply_reason =
-        "Transaction applied and all post-write SHA-256 values verified.".to_string();
-    apply_result.transaction_status = Some("Applied".to_string());
-    apply_result.atomic_replacement_completed = true;
-    apply_result.authorization_consumed = true;
-    apply_result.applied = true;
-    apply_result.applied_at = Some(now_rfc3339());
-    record_apply_result(
+    #[cfg(any(unix, windows))]
+    return replacement_recovery::begin_replace_transaction(
         store,
         &task,
-        &params.run_id,
-        &proposal_id_for_result,
+        params,
         apply_result,
-    )
-    .map(|(_, result)| (first_proposal, result))
+        &prepared_items,
+        prepared_replacements,
+    );
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        for (item, prepared_replacement) in prepared_items.iter().zip(prepared_replacements) {
+            let expected_post_write_hash =
+                format!("sha256:{}", hex_sha256(&item.replacement_bytes));
+            let outcome = commit_prepared_atomic_replace(prepared_replacement, &item.target_path);
+            apply_result.temp_file_cleaned =
+                apply_result.temp_file_cleaned && outcome.temp_file_cleaned;
+            if let Some(reason) = outcome.failure_reason {
+                apply_result.transaction_items.push(transaction_item_result(
+                    item,
+                    "Failed",
+                    reason,
+                    outcome.post_write_sha256,
+                    outcome.atomic_replacement_completed,
+                    false,
+                    outcome.temp_file_cleaned,
+                ));
+                apply_result.apply_status = "Failed".to_string();
+                apply_result.apply_reason = reason.to_string();
+                apply_result.transaction_status = Some("PartialFailed".to_string());
+                apply_result.checklist.push(apply_result_check(
+                    "transaction_atomic_replacements_completed",
+                    "Fail",
+                    Some(reason),
+                ));
+                return record_apply_result(
+                    store,
+                    &task,
+                    &params.run_id,
+                    &proposal_id_for_result,
+                    apply_result,
+                );
+            }
+            if outcome.post_write_sha256.as_deref() != Some(expected_post_write_hash.as_str()) {
+                apply_result.transaction_items.push(transaction_item_result(
+                    item,
+                    "Failed",
+                    "Post-write SHA-256 does not match replacement content.",
+                    outcome.post_write_sha256,
+                    outcome.atomic_replacement_completed,
+                    false,
+                    outcome.temp_file_cleaned,
+                ));
+                apply_result.apply_status = "Failed".to_string();
+                apply_result.apply_reason =
+                    "Post-write SHA-256 does not match replacement content.".to_string();
+                apply_result.transaction_status = Some("PartialFailed".to_string());
+                apply_result.checklist.push(apply_result_check(
+                    "transaction_post_write_sha256_verified",
+                    "Fail",
+                    Some("Post-write SHA-256 does not match replacement content."),
+                ));
+                return record_apply_result(
+                    store,
+                    &task,
+                    &params.run_id,
+                    &proposal_id_for_result,
+                    apply_result,
+                );
+            }
+            apply_result.transaction_items.push(transaction_item_result(
+                item,
+                "Applied",
+                "File replaced and post-write SHA-256 verified.",
+                outcome.post_write_sha256.clone(),
+                outcome.atomic_replacement_completed,
+                true,
+                outcome.temp_file_cleaned,
+            ));
+        }
+        apply_result.checklist.push(apply_result_check(
+            "transaction_atomic_replacements_completed",
+            "Pass",
+            None,
+        ));
+        apply_result.checklist.push(apply_result_check(
+            "transaction_post_write_sha256_verified",
+            "Pass",
+            None,
+        ));
+        apply_result.apply_status = "Applied".to_string();
+        apply_result.apply_reason =
+            "Transaction applied and all post-write SHA-256 values verified.".to_string();
+        apply_result.transaction_status = Some("Applied".to_string());
+        apply_result.atomic_replacement_completed = true;
+        apply_result.authorization_consumed = true;
+        apply_result.applied = true;
+        apply_result.applied_at = Some(now_rfc3339());
+        record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &proposal_id_for_result,
+            apply_result,
+        )
+        .map(|(_, result)| (_first_proposal, result))
+    }
 }
 
 fn apply_create_file_transaction(
@@ -4857,7 +5100,7 @@ fn apply_create_file_transaction(
         .as_ref()
         .ok_or_else(|| "invalid params: transaction_items are required".to_string())?;
     let proposal_id_for_result = fallback_transaction_proposal_id(params);
-    let first_proposal = inspect_proposal(store, &params.run_id, &proposal_id_for_result)?;
+    let _first_proposal = inspect_proposal(store, &params.run_id, &proposal_id_for_result)?;
     let mut apply_result = WorkspacePatchApplyResultSummary {
         proposal_id: proposal_id_for_result.clone(),
         apply_id: format!("apply_{}", uuid::Uuid::new_v4().simple()),
@@ -4919,7 +5162,7 @@ fn apply_create_file_transaction(
             &proposal_id_for_result,
             result,
         )
-        .map(|(_, result)| (first_proposal.clone(), result))
+        .map(|(_, result)| (_first_proposal.clone(), result))
     };
 
     if !params.authorize {
@@ -4943,7 +5186,7 @@ fn apply_create_file_transaction(
             &proposal_id_for_result,
             apply_result,
         )
-        .map(|(_, result)| (first_proposal, result));
+        .map(|(_, result)| (_first_proposal, result));
     }
 
     if !(2..=5).contains(&items.len()) {
@@ -5103,7 +5346,7 @@ fn apply_create_file_transaction(
                 &proposal_id_for_result,
                 apply_result,
             )
-            .map(|(_, result)| (first_proposal, result));
+            .map(|(_, result)| (_first_proposal, result));
         }
         for seen_path in seen_paths.iter() {
             if seen_path == &proposal.path
@@ -5157,84 +5400,43 @@ fn apply_create_file_transaction(
         None,
     ));
 
-    let mut prepared_creates = Vec::new();
-    for item in &prepared_items {
-        let prepared = prepare_atomic_create_new_file(&item.target_path, &item.replacement_bytes);
-        if let Some(prepared) = prepared.prepared {
-            prepared_creates.push(prepared);
-            continue;
-        }
-        let reason = prepared
-            .failure_reason
-            .unwrap_or("Temporary sibling file preparation failed.");
-        apply_result
-            .transaction_items
-            .push(create_transaction_item_result(
-                item,
-                "Failed",
-                reason,
-                None,
-                false,
-                false,
-                prepared.temp_file_cleaned,
-            ));
-        apply_result.apply_status = "Failed".to_string();
-        apply_result.apply_reason = reason.to_string();
-        apply_result.transaction_status = Some("Failed".to_string());
-        apply_result.checklist.push(apply_result_check(
-            "transaction_temporary_sibling_files_created",
-            "Fail",
-            Some(reason),
-        ));
-        return record_apply_result(
-            store,
-            &task,
-            &params.run_id,
-            &proposal_id_for_result,
-            apply_result,
-        )
-        .map(|(_, result)| (first_proposal, result));
-    }
-    apply_result.checklist.push(apply_result_check(
-        "transaction_temporary_sibling_files_created",
-        "Pass",
-        None,
-    ));
-
-    for (item, prepared_create) in prepared_items.iter().zip(prepared_creates) {
-        let expected_post_write_hash = format!("sha256:{}", hex_sha256(&item.replacement_bytes));
-        let outcome = commit_prepared_atomic_create(prepared_create);
-        apply_result.temp_file_cleaned =
-            apply_result.temp_file_cleaned && outcome.temp_file_cleaned;
-        if let Some(reason) = outcome.failure_reason {
+    #[cfg(any(unix, windows))]
+    return replacement_recovery::begin_create_transaction(
+        store,
+        &task,
+        params,
+        apply_result,
+        &prepared_items,
+    );
+    #[cfg(not(any(unix, windows)))]
+    {
+        let mut prepared_creates = Vec::new();
+        for item in &prepared_items {
+            let prepared =
+                prepare_atomic_create_new_file(&item.target_path, &item.replacement_bytes);
+            if let Some(prepared) = prepared.prepared {
+                prepared_creates.push(prepared);
+                continue;
+            }
+            let reason = prepared
+                .failure_reason
+                .unwrap_or("Temporary sibling file preparation failed.");
             apply_result
                 .transaction_items
                 .push(create_transaction_item_result(
                     item,
-                    if reason == "Target path already exists." {
-                        "Denied"
-                    } else {
-                        "Failed"
-                    },
+                    "Failed",
                     reason,
-                    outcome.post_write_sha256,
-                    outcome.atomic_create_completed,
+                    None,
                     false,
-                    outcome.temp_file_cleaned,
+                    false,
+                    prepared.temp_file_cleaned,
                 ));
-            apply_result.apply_status = if reason == "Target path already exists." {
-                "Denied".to_string()
-            } else {
-                "Failed".to_string()
-            };
+            apply_result.apply_status = "Failed".to_string();
             apply_result.apply_reason = reason.to_string();
-            apply_result.transaction_status = Some(if apply_result.transaction_items.len() > 1 {
-                "PartialFailed".to_string()
-            } else {
-                apply_result.apply_status.clone()
-            });
+            apply_result.transaction_status = Some("Failed".to_string());
             apply_result.checklist.push(apply_result_check(
-                "transaction_atomic_creates_completed",
+                "transaction_temporary_sibling_files_created",
                 "Fail",
                 Some(reason),
             ));
@@ -5245,76 +5447,132 @@ fn apply_create_file_transaction(
                 &proposal_id_for_result,
                 apply_result,
             )
-            .map(|(_, result)| (first_proposal, result));
+            .map(|(_, result)| (_first_proposal, result));
         }
-        if outcome.post_write_sha256.as_deref() != Some(expected_post_write_hash.as_str()) {
+        apply_result.checklist.push(apply_result_check(
+            "transaction_temporary_sibling_files_created",
+            "Pass",
+            None,
+        ));
+
+        for (item, prepared_create) in prepared_items.iter().zip(prepared_creates) {
+            let expected_post_write_hash =
+                format!("sha256:{}", hex_sha256(&item.replacement_bytes));
+            let outcome = commit_prepared_atomic_create(prepared_create);
+            apply_result.temp_file_cleaned =
+                apply_result.temp_file_cleaned && outcome.temp_file_cleaned;
+            if let Some(reason) = outcome.failure_reason {
+                apply_result
+                    .transaction_items
+                    .push(create_transaction_item_result(
+                        item,
+                        if reason == "Target path already exists." {
+                            "Denied"
+                        } else {
+                            "Failed"
+                        },
+                        reason,
+                        outcome.post_write_sha256,
+                        outcome.atomic_create_completed,
+                        false,
+                        outcome.temp_file_cleaned,
+                    ));
+                apply_result.apply_status = if reason == "Target path already exists." {
+                    "Denied".to_string()
+                } else {
+                    "Failed".to_string()
+                };
+                apply_result.apply_reason = reason.to_string();
+                apply_result.transaction_status =
+                    Some(if apply_result.transaction_items.len() > 1 {
+                        "PartialFailed".to_string()
+                    } else {
+                        apply_result.apply_status.clone()
+                    });
+                apply_result.checklist.push(apply_result_check(
+                    "transaction_atomic_creates_completed",
+                    "Fail",
+                    Some(reason),
+                ));
+                return record_apply_result(
+                    store,
+                    &task,
+                    &params.run_id,
+                    &proposal_id_for_result,
+                    apply_result,
+                )
+                .map(|(_, result)| (_first_proposal, result));
+            }
+            if outcome.post_write_sha256.as_deref() != Some(expected_post_write_hash.as_str()) {
+                apply_result
+                    .transaction_items
+                    .push(create_transaction_item_result(
+                        item,
+                        "Failed",
+                        "Post-write SHA-256 does not match replacement content.",
+                        outcome.post_write_sha256,
+                        outcome.atomic_create_completed,
+                        false,
+                        outcome.temp_file_cleaned,
+                    ));
+                apply_result.apply_status = "Failed".to_string();
+                apply_result.apply_reason =
+                    "Post-write SHA-256 does not match replacement content.".to_string();
+                apply_result.transaction_status = Some("PartialFailed".to_string());
+                apply_result.checklist.push(apply_result_check(
+                    "transaction_post_write_sha256_verified",
+                    "Fail",
+                    Some("Post-write SHA-256 does not match replacement content."),
+                ));
+                return record_apply_result(
+                    store,
+                    &task,
+                    &params.run_id,
+                    &proposal_id_for_result,
+                    apply_result,
+                )
+                .map(|(_, result)| (_first_proposal, result));
+            }
             apply_result
                 .transaction_items
                 .push(create_transaction_item_result(
                     item,
-                    "Failed",
-                    "Post-write SHA-256 does not match replacement content.",
-                    outcome.post_write_sha256,
+                    "Applied",
+                    "File created and post-write SHA-256 verified.",
+                    outcome.post_write_sha256.clone(),
                     outcome.atomic_create_completed,
-                    false,
+                    true,
                     outcome.temp_file_cleaned,
                 ));
-            apply_result.apply_status = "Failed".to_string();
-            apply_result.apply_reason =
-                "Post-write SHA-256 does not match replacement content.".to_string();
-            apply_result.transaction_status = Some("PartialFailed".to_string());
-            apply_result.checklist.push(apply_result_check(
-                "transaction_post_write_sha256_verified",
-                "Fail",
-                Some("Post-write SHA-256 does not match replacement content."),
-            ));
-            return record_apply_result(
-                store,
-                &task,
-                &params.run_id,
-                &proposal_id_for_result,
-                apply_result,
-            )
-            .map(|(_, result)| (first_proposal, result));
         }
-        apply_result
-            .transaction_items
-            .push(create_transaction_item_result(
-                item,
-                "Applied",
-                "File created and post-write SHA-256 verified.",
-                outcome.post_write_sha256.clone(),
-                outcome.atomic_create_completed,
-                true,
-                outcome.temp_file_cleaned,
-            ));
+        apply_result.checklist.push(apply_result_check(
+            "transaction_atomic_creates_completed",
+            "Pass",
+            None,
+        ));
+        apply_result.checklist.push(apply_result_check(
+            "transaction_post_write_sha256_verified",
+            "Pass",
+            None,
+        ));
+        apply_result.apply_status = "Applied".to_string();
+        apply_result.apply_reason =
+            "Create-file transaction applied and all post-write SHA-256 values verified."
+                .to_string();
+        apply_result.transaction_status = Some("Applied".to_string());
+        apply_result.atomic_create_completed = true;
+        apply_result.authorization_consumed = true;
+        apply_result.applied = true;
+        apply_result.applied_at = Some(now_rfc3339());
+        record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &proposal_id_for_result,
+            apply_result,
+        )
+        .map(|(_, result)| (_first_proposal, result))
     }
-    apply_result.checklist.push(apply_result_check(
-        "transaction_atomic_creates_completed",
-        "Pass",
-        None,
-    ));
-    apply_result.checklist.push(apply_result_check(
-        "transaction_post_write_sha256_verified",
-        "Pass",
-        None,
-    ));
-    apply_result.apply_status = "Applied".to_string();
-    apply_result.apply_reason =
-        "Create-file transaction applied and all post-write SHA-256 values verified.".to_string();
-    apply_result.transaction_status = Some("Applied".to_string());
-    apply_result.atomic_create_completed = true;
-    apply_result.authorization_consumed = true;
-    apply_result.applied = true;
-    apply_result.applied_at = Some(now_rfc3339());
-    record_apply_result(
-        store,
-        &task,
-        &params.run_id,
-        &proposal_id_for_result,
-        apply_result,
-    )
-    .map(|(_, result)| (first_proposal, result))
 }
 
 fn apply_delete_file_transaction(
@@ -5337,7 +5595,7 @@ fn apply_delete_file_transaction(
         .as_ref()
         .ok_or_else(|| "invalid params: transaction_items are required".to_string())?;
     let proposal_id_for_result = fallback_transaction_proposal_id(params);
-    let first_proposal = inspect_proposal(store, &params.run_id, &proposal_id_for_result)?;
+    let _first_proposal = inspect_proposal(store, &params.run_id, &proposal_id_for_result)?;
     let mut apply_result = WorkspacePatchApplyResultSummary {
         proposal_id: proposal_id_for_result.clone(),
         apply_id: format!("apply_{}", uuid::Uuid::new_v4().simple()),
@@ -5399,7 +5657,7 @@ fn apply_delete_file_transaction(
             &proposal_id_for_result,
             result,
         )
-        .map(|(_, result)| (first_proposal.clone(), result))
+        .map(|(_, result)| (_first_proposal.clone(), result))
     };
 
     if !params.authorize {
@@ -5423,7 +5681,7 @@ fn apply_delete_file_transaction(
             &proposal_id_for_result,
             apply_result,
         )
-        .map(|(_, result)| (first_proposal, result));
+        .map(|(_, result)| (_first_proposal, result));
     }
 
     if !(2..=5).contains(&items.len()) {
@@ -5596,7 +5854,7 @@ fn apply_delete_file_transaction(
                 &proposal_id_for_result,
                 apply_result,
             )
-            .map(|(_, result)| (first_proposal, result));
+            .map(|(_, result)| (_first_proposal, result));
         }
         for seen_path in seen_paths.iter() {
             if seen_path == &proposal.path
@@ -5663,83 +5921,96 @@ fn apply_delete_file_transaction(
         None,
     ));
 
-    for item in &prepared_items {
-        let outcome = atomic_delete_existing_file(&item.target_path);
-        apply_result.atomic_delete_completed =
-            apply_result.atomic_delete_completed || outcome.atomic_delete_completed;
-        apply_result.post_delete_target_exists = outcome.post_delete_target_exists;
-        if let Some(reason) = outcome.failure_reason {
+    #[cfg(any(unix, windows))]
+    return replacement_recovery::begin_delete_transaction(
+        store,
+        &task,
+        params,
+        apply_result,
+        &prepared_items,
+    );
+    #[cfg(not(any(unix, windows)))]
+    {
+        for item in &prepared_items {
+            let outcome = atomic_delete_existing_file(&item.target_path);
+            apply_result.atomic_delete_completed =
+                apply_result.atomic_delete_completed || outcome.atomic_delete_completed;
+            apply_result.post_delete_target_exists = outcome.post_delete_target_exists;
+            if let Some(reason) = outcome.failure_reason {
+                apply_result
+                    .transaction_items
+                    .push(delete_transaction_item_result(
+                        item,
+                        "Failed",
+                        reason,
+                        outcome.post_delete_target_exists,
+                        outcome.atomic_delete_completed,
+                        false,
+                        true,
+                    ));
+                apply_result.apply_status = "Failed".to_string();
+                apply_result.apply_reason = reason.to_string();
+                apply_result.transaction_status =
+                    Some(if apply_result.transaction_items.len() > 1 {
+                        "PartialFailed".to_string()
+                    } else {
+                        "Failed".to_string()
+                    });
+                apply_result.checklist.push(apply_result_check(
+                    "transaction_atomic_deletes_completed",
+                    "Fail",
+                    Some(reason),
+                ));
+                return record_apply_result(
+                    store,
+                    &task,
+                    &params.run_id,
+                    &proposal_id_for_result,
+                    apply_result,
+                )
+                .map(|(_, result)| (_first_proposal, result));
+            }
             apply_result
                 .transaction_items
                 .push(delete_transaction_item_result(
                     item,
-                    "Failed",
-                    reason,
+                    "Applied",
+                    "File deleted and post-delete absence verified.",
                     outcome.post_delete_target_exists,
                     outcome.atomic_delete_completed,
-                    false,
+                    true,
                     true,
                 ));
-            apply_result.apply_status = "Failed".to_string();
-            apply_result.apply_reason = reason.to_string();
-            apply_result.transaction_status = Some(if apply_result.transaction_items.len() > 1 {
-                "PartialFailed".to_string()
-            } else {
-                "Failed".to_string()
-            });
-            apply_result.checklist.push(apply_result_check(
-                "transaction_atomic_deletes_completed",
-                "Fail",
-                Some(reason),
-            ));
-            return record_apply_result(
-                store,
-                &task,
-                &params.run_id,
-                &proposal_id_for_result,
-                apply_result,
-            )
-            .map(|(_, result)| (first_proposal, result));
         }
-        apply_result
-            .transaction_items
-            .push(delete_transaction_item_result(
-                item,
-                "Applied",
-                "File deleted and post-delete absence verified.",
-                outcome.post_delete_target_exists,
-                outcome.atomic_delete_completed,
-                true,
-                true,
-            ));
+        apply_result.checklist.push(apply_result_check(
+            "transaction_atomic_deletes_completed",
+            "Pass",
+            None,
+        ));
+        apply_result.checklist.push(apply_result_check(
+            "transaction_post_delete_absence_verified",
+            "Pass",
+            None,
+        ));
+        apply_result.apply_status = "Applied".to_string();
+        apply_result.apply_reason =
+            "Delete-file transaction applied and all post-delete absence checks passed."
+                .to_string();
+        apply_result.transaction_status = Some("Applied".to_string());
+        apply_result.atomic_delete_completed = true;
+        apply_result.post_delete_target_exists = Some(false);
+        apply_result.authorization_consumed = true;
+        apply_result.applied = true;
+        apply_result.applied_at = Some(now_rfc3339());
+        record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &proposal_id_for_result,
+            apply_result,
+        )
+        .map(|(_, result)| (_first_proposal, result))
     }
-    apply_result.checklist.push(apply_result_check(
-        "transaction_atomic_deletes_completed",
-        "Pass",
-        None,
-    ));
-    apply_result.checklist.push(apply_result_check(
-        "transaction_post_delete_absence_verified",
-        "Pass",
-        None,
-    ));
-    apply_result.apply_status = "Applied".to_string();
-    apply_result.apply_reason =
-        "Delete-file transaction applied and all post-delete absence checks passed.".to_string();
-    apply_result.transaction_status = Some("Applied".to_string());
-    apply_result.atomic_delete_completed = true;
-    apply_result.post_delete_target_exists = Some(false);
-    apply_result.authorization_consumed = true;
-    apply_result.applied = true;
-    apply_result.applied_at = Some(now_rfc3339());
-    record_apply_result(
-        store,
-        &task,
-        &params.run_id,
-        &proposal_id_for_result,
-        apply_result,
-    )
-    .map(|(_, result)| (first_proposal, result))
 }
 
 pub(super) fn apply_proposal(
@@ -5767,6 +6038,10 @@ fn apply_proposal_under_lock(
     ),
     String,
 > {
+    #[cfg(any(unix, windows))]
+    if let Some(result) = replacement_recovery::resume_transaction(store, params)? {
+        return Ok(result);
+    }
     if params.transaction_recovery_source.is_some() {
         if params.transaction_items.is_some() {
             let operations = transaction_proposal_operations(store, params)?;
@@ -6021,9 +6296,17 @@ fn apply_proposal_under_lock(
 
     let events = read_existing_run_events(store, &params.run_id)?;
     if has_consumed_apply_authorization(&events, &params.proposal_id) {
-        #[cfg(unix)]
-        if operation == WorkspacePatchOperation::ReplaceFile.as_str() {
-            replacement_recovery::cleanup_recorded(store, params)?;
+        #[cfg(any(unix, windows))]
+        if matches!(
+            operation.as_str(),
+            "replace_file" | "patch_file" | "create_file" | "delete_file"
+        ) {
+            if let Some(recorded) = replacement_recovery::cleanup_recorded(store, &task, params)? {
+                return Ok((
+                    inspect_proposal(store, &params.run_id, &params.proposal_id)?,
+                    recorded,
+                ));
+            }
         }
 
         apply_result.checklist.push(apply_result_check(
@@ -6223,7 +6506,7 @@ fn apply_proposal_under_lock(
         None,
     ));
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     if let Some(result) = replacement_recovery::recover(store, &task, params, &proposal)? {
         return Ok((
             inspect_proposal(store, &params.run_id, &params.proposal_id)?,
@@ -6470,9 +6753,9 @@ fn apply_proposal_under_lock(
     ));
 
     let expected_post_write_hash = format!("sha256:{}", hex_sha256(replacement_bytes));
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     let mut recovery_witness = None;
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     let outcome = {
         let prepared = prepare_atomic_replace_existing_file(&target_path, replacement_bytes);
         if let Some(prepared) = prepared.prepared {
@@ -6508,7 +6791,7 @@ fn apply_proposal_under_lock(
             }
         }
     };
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     let outcome = atomic_replace_existing_file(&target_path, replacement_bytes);
     apply_result.temp_file_cleaned = outcome.temp_file_cleaned;
     apply_result.atomic_replacement_completed = outcome.atomic_replacement_completed;
@@ -6617,11 +6900,11 @@ fn apply_proposal_under_lock(
         &params.proposal_id,
         apply_result,
     )?;
-    #[cfg(unix)]
-    if let Some(witness) = recovery_witness {
+    #[cfg(any(unix, windows))]
+    if recovery_witness.is_some() {
         #[cfg(test)]
         replacement_recovery::crash_boundary("recorded");
-        replacement_recovery::finish(store, params, &witness)?;
+        replacement_recovery::finish(store, &task, params)?;
     }
     Ok(recorded)
 }
@@ -6950,4 +7233,12 @@ pub(super) fn apply_plan_for_snapshot(
         }
     }
     plan
+}
+
+#[cfg(all(test, any(unix, windows)))]
+pub(super) fn inspect_retained_apply_for_test(
+    store: &BrownieStore,
+    params: &ProposalApplyParams,
+) -> Result<bool, String> {
+    replacement_recovery::inspect_for_test(store, params)
 }
