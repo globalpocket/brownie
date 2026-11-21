@@ -6397,6 +6397,8 @@ impl RunLedger {
         }
         let mut file = OpenOptions::new()
             .create(true)
+            // Windows LockFileEx rejects append-only handles.
+            .read(true)
             .append(true)
             .open(self.run_dir.join("ledger.jsonl"))
             .context("failed to open run ledger")?;
@@ -14197,6 +14199,7 @@ mod tests {
         let bytes = format!("{}\n", serde_json::to_string(&event).unwrap()).into_bytes();
         let mut writer = OpenOptions::new()
             .create(true)
+            .read(true)
             .append(true)
             .open(run_dir.join("ledger.jsonl"))
             .unwrap();
@@ -14223,6 +14226,15 @@ mod tests {
         let events = result.expect("reader must not parse a writer's incomplete JSON record");
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event_id, "evt_1");
+        // Exercise the production append handle as well as the raw writer:
+        // Windows rejects locking an append-only handle before any write.
+        let ledger = RunLedger::new(temp.path().join("run_1"));
+        let mut appended = event;
+        appended.event_id = "evt_2".into();
+        ledger
+            .append(&appended)
+            .expect("production append must lock");
+        assert_eq!(ledger.read_events().unwrap().len(), 2);
     }
 
     #[test]
