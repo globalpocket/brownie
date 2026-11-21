@@ -7967,6 +7967,7 @@ fn validate_workspace_patch_apply_result_payload_schema(
     ] {
         validate_optional_payload_u64_field(object, field)?;
     }
+    validate_optional_payload_string_or_null_field(object, "recorded_response_sha256")?;
     validate_optional_payload_array_field(object, "transaction_items")?;
     validate_optional_payload_object_field(object, "transaction_recovery_source")?;
     Ok(())
@@ -9903,6 +9904,7 @@ const WORKSPACE_PATCH_APPLY_DRY_RUN_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
 ];
 
 const WORKSPACE_PATCH_APPLY_RESULT_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "recorded_response_sha256",
     "applied",
     "applied_at",
     "apply_id",
@@ -11464,8 +11466,18 @@ fn validate_legacy_ledger_payload_envelope(
         return Ok(());
     }
 
-    if (2..=LEDGER_PAYLOAD_LEGACY_GLOBAL_SCHEMA_MAX_VERSION).contains(&envelope.schema_version)
-        && envelope.schema_version >= ledger_payload_schema_version(kind)
+    let legacy_apply_response = matches!(kind, LedgerEventKind::WorkspacePatchApplyResultRecorded)
+        && matches!(envelope.schema_version, 12 | 13);
+    if legacy_apply_response {
+        validate_workspace_patch_apply_result_payload_schema(kind, payload)?;
+        if payload.get("recorded_response_sha256").is_some() {
+            bail!("legacy apply result must not contain a recorded response digest");
+        }
+    }
+    if legacy_apply_response
+        || ((2..=LEDGER_PAYLOAD_LEGACY_GLOBAL_SCHEMA_MAX_VERSION)
+            .contains(&envelope.schema_version)
+            && envelope.schema_version >= ledger_payload_schema_version(kind))
     {
         let expected_schema_id = ledger_payload_contract::ledger_payload_legacy_schema_id(
             &format!("{kind:?}"),
@@ -14311,6 +14323,51 @@ mod tests {
 
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].kind, LedgerEventKind::TaskCompleted);
+    }
+
+    #[test]
+    fn apply_result_response_digest_preserves_legacy_envelopes() {
+        let kind = LedgerEventKind::WorkspacePatchApplyResultRecorded;
+        let kind_name = "WorkspacePatchApplyResultRecorded";
+        let mut payload = serde_json::json!({
+            "proposal_id": "proposal", "apply_id": "apply", "apply_status": "Applied",
+            "apply_reason": "fixture", "operation": "replace_file", "path": "file",
+            "authorization_consumed": true, "applied": true,
+            "failed_checks": [], "blocked_checks": []
+        });
+        for schema_version in [12, 13] {
+            let schema_id =
+                ledger_payload_contract::ledger_payload_legacy_schema_id(kind_name, schema_version);
+            let fingerprint =
+                ledger_payload_contract::ledger_payload_schema_fingerprint_for_version(
+                    kind_name,
+                    schema_version,
+                );
+            if schema_version == 12 {
+                assert_eq!(fingerprint, "shape-fnv1a64:eb57b36863387e62");
+            }
+            let legacy = LedgerPayloadEnvelope {
+                schema_version,
+                shape_id: schema_id.clone(),
+                shape_fingerprint: fingerprint.clone(),
+                schema_id,
+                schema_fingerprint: fingerprint,
+                instance_shape_fingerprint:
+                    ledger_payload_contract::ledger_payload_instance_shape_fingerprint_for_version(
+                        kind_name,
+                        schema_version,
+                        &payload,
+                    ),
+            };
+            validate_legacy_ledger_payload_envelope(&kind, &payload, &legacy).unwrap();
+            assert!(validate_ledger_payload_envelope(&kind, &payload, &legacy).is_err());
+        }
+        payload["recorded_response_sha256"] = serde_json::json!("a".repeat(64));
+        let current = ledger_payload_envelope(&kind, Some(&payload))
+            .unwrap()
+            .unwrap();
+        assert_eq!(current.schema_version, 14);
+        validate_ledger_payload_envelope(&kind, &payload, &current).unwrap();
     }
 
     #[test]

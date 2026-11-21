@@ -554,6 +554,7 @@ fn workspace_recovery_process_loss_controls(operation: &str, external_kill: bool
         "terminal",
         "terminal-altered-digest",
         "terminal-altered-response",
+        "terminal-altered-checklist",
         "terminal-missing-response",
         "terminal-changed-request",
         "terminal-replaced-target",
@@ -781,6 +782,10 @@ fn workspace_recovery_process_loss_controls(operation: &str, external_kill: bool
                 }
                 "terminal-altered-response" => {
                     intent["recorded_result"]["apply_reason"] = json!("unbound response");
+                    std::fs::write(&intent_path, serde_json::to_vec(&intent).unwrap()).unwrap();
+                }
+                "terminal-altered-checklist" => {
+                    intent["recorded_result"]["checklist"] = json!([]);
                     std::fs::write(&intent_path, serde_json::to_vec(&intent).unwrap()).unwrap();
                 }
                 "terminal-missing-response" => {

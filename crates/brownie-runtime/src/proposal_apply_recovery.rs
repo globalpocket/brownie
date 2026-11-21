@@ -674,12 +674,16 @@ pub(super) fn cleanup_recorded(
         .recorded_result
         .as_ref()
         .ok_or_else(|| error("complete recorded response unavailable"))?;
+    let response_digest = hex_sha256(&serde_json::to_vec(recorded).map_err(error)?);
+    if results[0]["recorded_response_sha256"].as_str() != Some(response_digest.as_str()) {
+        return Err(error("recorded response digest differs from ledger"));
+    }
     let full = serde_json::to_value(recorded).map_err(error)?;
     if !results[0]
         .as_object()
         .ok_or_else(|| error("invalid ledger result"))?
         .iter()
-        .all(|(key, value)| full.get(key) == Some(value))
+        .all(|(key, value)| key == "recorded_response_sha256" || full.get(key) == Some(value))
     {
         return Err(error("recorded response differs from ledger"));
     }

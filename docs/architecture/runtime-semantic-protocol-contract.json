@@ -990,10 +990,10 @@
         "ledger_event_kind": "WorkspacePatchApplyResultRecorded",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:applied:boolean,apply_id:string,apply_reason:string,apply_status:string,authorization_consumed:boolean,blocked_checks:array<string>,failed_checks:array<string>,operation:string,path:string,proposal_id:string;known_optional_fields:applied_at:string_or_null,atomic_create_completed:boolean_or_null,atomic_delete_completed:boolean_or_null,atomic_replacement_completed:boolean_or_null,authorization_id:string_or_null,check_count:u64,checked_at:string_or_null,content_bytes:u64,content_chars:u64,expected_target_absent:boolean_or_null,expected_target_sha256:string_or_null,hunk_count:u64,hunk_fingerprint:string_or_null,post_delete_target_exists:boolean_or_null,post_write_sha256:string_or_null,pre_write_target_exists:boolean_or_null,pre_write_target_sha256:string_or_null,temp_file_cleaned:boolean_or_null,transaction_id:string_or_null,transaction_item_count:u64,transaction_items:array,transaction_recovery_source:object,transaction_recovery_status:string_or_null,transaction_status:string_or_null;additional_fields:false;workspace_patch_apply_result_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:eb57b36863387e62",
-        "payload_schema_id": "ledger_payload.WorkspacePatchApplyResultRecorded.v12",
-        "payload_schema_version": 12,
+        "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:applied:boolean,apply_id:string,apply_reason:string,apply_status:string,authorization_consumed:boolean,blocked_checks:array<string>,failed_checks:array<string>,operation:string,path:string,proposal_id:string;known_optional_fields:applied_at:string_or_null,atomic_create_completed:boolean_or_null,atomic_delete_completed:boolean_or_null,atomic_replacement_completed:boolean_or_null,authorization_id:string_or_null,check_count:u64,checked_at:string_or_null,content_bytes:u64,content_chars:u64,expected_target_absent:boolean_or_null,expected_target_sha256:string_or_null,hunk_count:u64,hunk_fingerprint:string_or_null,post_delete_target_exists:boolean_or_null,post_write_sha256:string_or_null,pre_write_target_exists:boolean_or_null,pre_write_target_sha256:string_or_null,recorded_response_sha256:string_or_null,temp_file_cleaned:boolean_or_null,transaction_id:string_or_null,transaction_item_count:u64,transaction_items:array,transaction_recovery_source:object,transaction_recovery_status:string_or_null,transaction_status:string_or_null;additional_fields:false;workspace_patch_apply_result_payload:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:4f93f11bca51bb3b",
+        "payload_schema_id": "ledger_payload.WorkspacePatchApplyResultRecorded.v14",
+        "payload_schema_version": 14,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -2938,11 +2938,11 @@
           "temp_file_cleaned": true
         },
         "payload_instance_shape_descriptor": "object{applied:boolean,applied_at:string,apply_id:string,apply_reason:string,apply_status:string,atomic_create_completed:boolean,atomic_delete_completed:boolean,atomic_replacement_completed:boolean,authorization_consumed:boolean,authorization_id:string,blocked_checks:array<empty>,check_count:integer,checked_at:string,content_bytes:integer,content_chars:integer,expected_target_absent:boolean,expected_target_sha256:string,failed_checks:array<empty>,operation:string,path:string,post_delete_target_exists:null,post_write_sha256:string,pre_write_target_exists:boolean,pre_write_target_sha256:string,proposal_id:string,temp_file_cleaned:boolean}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:5286e18d6e689fd8",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:24797e8568688f12",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:eb57b36863387e62",
-        "payload_schema_id": "ledger_payload.WorkspacePatchApplyResultRecorded.v12"
+        "payload_schema_fingerprint": "shape-fnv1a64:4f93f11bca51bb3b",
+        "payload_schema_id": "ledger_payload.WorkspacePatchApplyResultRecorded.v14"
       },
       {
         "ledger_event_kind": "WorkspacePatchReadinessReportCreated",
