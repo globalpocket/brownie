@@ -1,4 +1,5 @@
 import { extractReleaseArchive } from './release-artifact-extract.mjs';
+import { artifactWorkflowProvenance } from './release-artifact-workflow-provenance.mjs';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -299,6 +300,7 @@ function bootstrapSoakRuntime(runtime, environment) {
 
 export async function runReleaseArtifactStatefulSoak(options = {}) {
   const workflowRunId = workflowRunIdFrom(options);
+  const workflowProvenance = artifactWorkflowProvenance(repoRoot, workflowRunId);
   const commandLimit = boundedCommandLimit(options);
   const targetId = options.targetId ?? process.env.BROWNIE_RELEASE_ARTIFACT_SOAK_TARGET ?? '';
   const target = releaseTargets.find((candidate) => candidate.id === targetId);
@@ -306,6 +308,7 @@ export async function runReleaseArtifactStatefulSoak(options = {}) {
   const downloadRoot = options.downloadRoot ?? process.env.BROWNIE_RELEASE_ARTIFACT_SOAK_DOWNLOAD_ROOT ?? '';
   const archivePath = options.archivePath ?? findFile(downloadRoot, target.archiveName);
   if (!archivePath) throw new Error(`downloaded ${target.archiveName} was not found`);
+  const archiveSha256 = sha256File(archivePath);
   const extractionRoot = fs.mkdtempSync(path.join(os.tmpdir(), `brownie-release-artifact-soak-${target.id}-`));
   extractArchive(target, archivePath, extractionRoot);
   const packageIntegrity = assertPackageIntegrity(target, extractionRoot);
@@ -354,10 +357,12 @@ export async function runReleaseArtifactStatefulSoak(options = {}) {
     const ledgerAfterReplay = readDurableLedger(ledgerPath);
     if (replay.status !== 'no_eligible_task' || replay.controller_action !== 'stop' || replay.continuation_required !== false) throw new Error('runtime did not reject replay at the terminal boundary');
     if (afterReplay !== afterRecovery || ledgerAfterReplay.sha256 !== ledgerAfterRecovery.sha256) throw new Error('replay caused a duplicate side effect after terminal convergence');
+    if (sha256File(archivePath) !== archiveSha256) throw new Error('downloaded archive changed during the artifact soak');
     return {
       schema_version: 1, evidence_id: 'brownie-release-artifact-stateful-soak-v1', target: target.id, workflow_run_id: workflowRunId,
+      ...workflowProvenance,
       bounds: { maximum_commands: commandLimit, commands_executed: 3, command_scope: 'state_transition_cli_invocations', bootstrap_runtime_calls: 1, total_runtime_processes: 4, per_command_timeout_ms: 60_000 },
-      artifact: { archive_sha256: sha256File(archivePath), ...packageIntegrity },
+      artifact: { archive_sha256: archiveSha256, ...packageIntegrity },
       checks: {
         provider_bootstrap: { passed: true, ...bootstrap },
         task_execution: { passed: true, applied: true, terminal_state: 'Completed', ledger_application_recorded: true, task_output: soakOutputName, task_output_sha256: sha256File(outputFile) },
@@ -367,7 +372,7 @@ export async function runReleaseArtifactStatefulSoak(options = {}) {
         ledger_workspace_consistency: { passed: true, full_workspace_snapshot: true, ledger_prefix_preserved: true, ledger_after_run: ledgerAfterRun.sha256, ledger_after_recovery: ledgerAfterRecovery.sha256, workspace_after_run: afterRun, workspace_after_recovery: afterRecovery },
         resume_replay_behavior: { passed: true, resume_controller_action: resumed.controller_action, replay_controller_action: replay.controller_action },
         finite_convergence: { passed: true, recovery_status: resumed.status, terminal_status: replay.status, commands_executed: 3, maximum_commands: commandLimit },
-        evidence_chain_integrity: { passed: true, archive_sha256: sha256File(archivePath), artifact_sha256: packageIntegrity.artifact_sha256, runtime_sha256: packageIntegrity.runtime_sha256, workspace_snapshot: afterRecovery, ledger_sha256: ledgerAfterRecovery.sha256 }
+        evidence_chain_integrity: { passed: true, archive_sha256: archiveSha256, artifact_sha256: packageIntegrity.artifact_sha256, runtime_sha256: packageIntegrity.runtime_sha256, workspace_snapshot: afterRecovery, ledger_sha256: ledgerAfterRecovery.sha256 }
       }
     };
   });
