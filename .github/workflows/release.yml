@@ -189,6 +189,13 @@ jobs:
           corepack pnpm --workspace-root release:runtime-operational-evidence
           corepack pnpm --workspace-root guard:runtime-operational-evidence
 
+      - name: Verify and write target receipt
+        env:
+          BROWNIE_RELEASE_REQUIRE_WORKFLOW_PROVENANCE: '1'
+          BROWNIE_ROUNDTRIP_TARGET: ${{ matrix.target }}
+        shell: bash
+        run: node scripts/release-roundtrip-aggregate.mjs target "$BROWNIE_ROUNDTRIP_TARGET"
+
       - name: Upload validated bound release evidence
         uses: actions/upload-artifact@v4
         with:
@@ -200,6 +207,7 @@ jobs:
             .brownie/release-evidence/artifacts/${{ matrix.target }}/${{ matrix.archive_name }}
             .brownie/release-evidence/artifacts/${{ matrix.target }}/runtime-journey-evidence.json
             .brownie/release-evidence/artifacts/${{ matrix.target }}/runtime-stateful-soak-evidence.json
+            .brownie/release-evidence/artifacts/${{ matrix.target }}/roundtrip-target-receipt.json
           if-no-files-found: error
           retention-days: 7
 
@@ -218,3 +226,34 @@ jobs:
           path: .brownie/release-evidence/artifacts/${{ matrix.target }}/runtime-stateful-soak-evidence.json
           if-no-files-found: error
           retention-days: 7
+
+  release-roundtrip-aggregate:
+    name: Aggregate release roundtrip receipts
+    needs: artifact-roundtrip
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Download all bound release evidence
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-evidence-*
+          path: aggregate-download
+
+      - name: Verify aggregate release roundtrip receipts
+        env:
+          BROWNIE_RELEASE_REQUIRE_WORKFLOW_PROVENANCE: '1'
+        run: node scripts/release-roundtrip-aggregate.mjs aggregate aggregate-download
+
+      - name: Upload aggregate release roundtrip receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-roundtrip-aggregate
+          path: release-roundtrip-aggregate.json
+          if-no-files-found: error

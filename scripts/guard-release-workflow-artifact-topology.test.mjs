@@ -11,6 +11,18 @@ import { buildRuntimeOperationalEvidence } from './release-runtime-operational-e
 
 const workflowPath = path.join(process.cwd(), '.github/workflows/release.yml');
 
+test('aggregate topology rejects missing dependencies, skipped verification, and omitted target receipts', () => {
+  const workflow = fs.readFileSync(workflowPath, 'utf8');
+  for (const [before, after, diagnostic] of [
+    ['    needs: artifact-roundtrip', '    needs: build-and-evidence', /aggregate must depend/],
+    ['- name: Verify aggregate release roundtrip receipts', '- name: Verify aggregate release roundtrip receipts\n        if: false', /verification must be mandatory/],
+    ['${{ matrix.target }}/roundtrip-target-receipt.json', '${{ matrix.target }}/replacement.json', /upload must include .*roundtrip-target-receipt/],
+  ]) {
+    assert.ok(workflow.includes(before));
+    assert.throws(() => runReleaseWorkflowArtifactTopologyGuard({ workflow: workflow.replace(before, after) }), diagnostic);
+  }
+});
+
 function sha256(contents) {
   return `sha256:${crypto.createHash('sha256').update(contents).digest('hex')}`;
 }

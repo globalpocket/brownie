@@ -112,6 +112,10 @@ export function validateReleaseWorkflowArtifactTopology(workflow) {
   }
 
   const upload = stepBlock(roundtrip, 'Upload validated bound release evidence');
+  const targetReceipt = stepBlock(roundtrip, 'Verify and write target receipt');
+  requireMatch(targetReceipt, /BROWNIE_RELEASE_REQUIRE_WORKFLOW_PROVENANCE: '1'/u, 'target receipt requires Workflow provenance.', errors);
+  requireMatch(targetReceipt, /BROWNIE_ROUNDTRIP_TARGET: \$\{\{ matrix\.target \}\}/u, 'target receipt must use its matrix target.', errors);
+  requireMatch(targetReceipt, /run: node scripts\/release-roundtrip-aggregate\.mjs target "\$BROWNIE_ROUNDTRIP_TARGET"/u, 'target receipt must run the target verifier.', errors);
   requireMatch(upload, /name: release-evidence-\$\{\{ matrix\.target \}\}/u, 'validated evidence upload must be target-scoped.', errors);
   for (const pathFragment of [
     '.brownie/release-evidence/supply-chain-artifact-evidence.json',
@@ -119,7 +123,8 @@ export function validateReleaseWorkflowArtifactTopology(workflow) {
     '.brownie/release-evidence/artifacts/${{ matrix.target }}/artifact-evidence.json',
     '.brownie/release-evidence/artifacts/${{ matrix.target }}/${{ matrix.archive_name }}',
     '.brownie/release-evidence/artifacts/${{ matrix.target }}/runtime-journey-evidence.json',
-    '.brownie/release-evidence/artifacts/${{ matrix.target }}/runtime-stateful-soak-evidence.json'
+    '.brownie/release-evidence/artifacts/${{ matrix.target }}/runtime-stateful-soak-evidence.json',
+    '.brownie/release-evidence/artifacts/${{ matrix.target }}/roundtrip-target-receipt.json'
   ]) {
     requireMatch(upload, new RegExp(pathFragment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'u'), `validated evidence upload must include ${pathFragment}.`, errors);
   }
@@ -144,11 +149,27 @@ export function validateReleaseWorkflowArtifactTopology(workflow) {
     'Run downloaded artifact stateful soak',
     'Bind downloaded runtime evidence to this release artifact',
     'Generate and validate bound release evidence',
+    'Verify and write target receipt',
     'Upload validated bound release evidence'
   ];
   const positions = orderedStepNames.map((name) => roundtrip.indexOf(`- name: ${name}`));
   if (positions.some((position) => position < 0) || positions.some((position, index) => index > 0 && position <= positions[index - 1])) {
     errors.push('artifact roundtrip evidence steps must run journey, soak, binding, collection, then upload in that order.');
+  }
+  const aggregate = jobBlock(workflow, 'release-roundtrip-aggregate');
+  requireMatch(aggregate, /^    needs: artifact-roundtrip$/m, 'aggregate must depend on every artifact-roundtrip job.', errors);
+  requireMatch(stepBlock(aggregate, 'Download all bound release evidence'),
+    /uses: actions\/download-artifact@v4[\s\S]*?pattern: release-evidence-\*\n\s+path: aggregate-download/u,
+    'aggregate must download the target evidence bundles into separate directories.', errors);
+  const verifyAggregate = stepBlock(aggregate, 'Verify aggregate release roundtrip receipts');
+  requireMatch(verifyAggregate, /BROWNIE_RELEASE_REQUIRE_WORKFLOW_PROVENANCE: '1'/u, 'aggregate requires Workflow provenance.', errors);
+  requireMatch(verifyAggregate, /^        run: node scripts\/release-roundtrip-aggregate\.mjs aggregate aggregate-download$/m,
+    'aggregate must run the all-target verifier.', errors);
+  requireMatch(stepBlock(aggregate, 'Upload aggregate release roundtrip receipt'),
+    /path: release-roundtrip-aggregate\.json\n\s+if-no-files-found: error/u,
+    'aggregate must upload its verified receipt.', errors);
+  if (/^ +(?:if:|continue-on-error:)/m.test(aggregate) || /^ +(?:if:|continue-on-error:)/m.test(targetReceipt)) {
+    errors.push('target and aggregate receipt verification must be mandatory.');
   }
   return errors;
 }
