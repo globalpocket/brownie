@@ -27,7 +27,7 @@
   ],
   "thresholds": {
     "lib_rs_production_line_ceiling": 16189,
-    "lib_rs_test_line_ceiling": 54142
+    "lib_rs_test_line_ceiling": 54269
   },
   "metrics": {
     "files": {
@@ -426,7 +426,8 @@
     "PR pending: resynchronized lib.rs test metrics and headless_continue metrics after continuation lock preflight and concurrency recovery regression coverage; production boundary and Runtime authority remain unchanged.",
     "PR pending: bounded lib.rs ceilings are synchronized to the measured workspace.write parser-repair liveness implementation; the guard remains fail-closed for any subsequent growth.",
     "PR #824 synchronizes measured lib.rs metrics and exact ceilings after adding build provenance reporting; Runtime authority and module ownership remain unchanged.",
-    "PR #826 raises only the measured lib.rs test ceiling for the scoped-preflight continuation regression and records the exact 54,142-line boundary; the guard remains fail-closed for subsequent growth."
+    "PR #826 raises only the measured lib.rs test ceiling for the scoped-preflight continuation regression and records the exact 54,142-line boundary; the guard remains fail-closed for subsequent growth.",
+    "PR #933 adds two executed regressions for inherited recovery-context read restrictions and shared read-budget replay. The test-only lib.rs ceiling is synchronized from 54142 to the measured 54269 lines; production ceilings, Rust Runtime ownership and runtime_release_ready=false are retained."
   ],
   "history": [
     "PR #462 updated runtime-module-decomposition metrics after Brownie loop harness and protected-read recovery hardening; closure status remains unchanged."

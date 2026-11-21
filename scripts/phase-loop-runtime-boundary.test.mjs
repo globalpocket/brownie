@@ -652,7 +652,7 @@ test('Runtime write scope does not parse project Patch only or Forbidden changes
   const source = fs.readFileSync(path.join(repoRoot, 'crates/brownie-runtime/src/controlled_tool_execution.rs'), 'utf8');
   assert.doesNotMatch(source, /fn selected_todo_forbids_workspace_write_path|fn patch_only_paths_from_goal|fn selected_todo_section/u);
   const start = source.indexOf('pub(super) fn workspace_write_constraint_rejection_reason(');
-  const end = source.indexOf('\nfn workspace_read_intent_runtime_rejection_reason(', start);
+  const end = source.indexOf('\npub(super) fn workspace_read_constraint_rejection_reason(', start);
   assert.ok(start > 0 && end > start);
   assert.match(source.slice(start, end), /constraints\.allows_write/u);
   assert.doesNotMatch(source.slice(start, end), /Forbidden changes:|patch_only_paths/u);
@@ -670,8 +670,22 @@ test('Runtime read admission uses typed constraints without project prompt inter
   assert.ok(start > 0 && end > start, 'locate the complete read admission function');
   const admission = source.slice(start, end);
   assert.match(admission, /record\.execution_constraints/u);
-  assert.match(admission, /read_budget_exhausted/u);
+  assert.match(admission, /return workspace_read_constraint_rejection_reason\(/u);
+  const sharedStart = source.indexOf('pub(super) fn workspace_read_constraint_rejection_reason(');
+  assert.ok(sharedStart > 0 && sharedStart < start, 'locate the shared typed read constraint check');
+  const shared = source.slice(sharedStart, start);
+  assert.match(shared, /constraints\.allows_read\(path\)/u);
+  assert.match(shared, /read_budget_exhausted/u);
+  assert.match(shared, /VerificationRecoveryContextReadMaterialized/u);
+  assert.match(shared, /ToolExecutionCompleted/u);
+  assert.doesNotMatch(shared, /selected_todo|record\.goal|leaf_required_next_tool|previous_workspace_read_preview/u);
   assert.doesNotMatch(admission, /selected_todo|record\.goal|leaf_required_next_tool|previous_workspace_read_preview/u);
+  const runtime = fs.readFileSync(path.join(repoRoot, 'crates/brownie-runtime/src/lib.rs'), 'utf8');
+  const recoveryStart = runtime.indexOf('fn validate_verification_recovery_context_read(');
+  const check = runtime.indexOf('controlled_tool_execution::workspace_read_constraint_rejection_reason(', recoveryStart);
+  const read = runtime.indexOf('let excerpt = read_verification_recovery_context_excerpt(', recoveryStart);
+  assert.ok(recoveryStart > 0 && check > recoveryStart && read > check,
+    'recovery context must check the shared restrictions before opening the workspace file');
 });
 
 test('Runtime does not validate project decomposition leaf metadata', () => {
