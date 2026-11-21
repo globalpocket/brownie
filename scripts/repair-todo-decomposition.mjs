@@ -2,14 +2,300 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { validateTodoDecompositionText } from './guard-todo-decomposition.mjs';
+import { createHash } from 'node:crypto';
+import { validateTodoDecompositionText, validateTodoDecompositionCandidate } from './guard-todo-decomposition.mjs';
 import { loadTodoState } from './phase-loop-todo-state.mjs';
+import { compileTaskConstraints, taskPolicyMetadataDigest } from './phase-loop-task-constraints.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = process.env.BROWNIE_REPAIR_TODO_REPO_ROOT
   ? path.resolve(process.env.BROWNIE_REPAIR_TODO_REPO_ROOT)
   : path.resolve(__dirname, '..');
+
+// Project policy belongs to the external controller. This candidate check is
+// read-only: callers must bind its result to the exact proposal before apply.
+export function validateQueueApplyCandidate(workspaceRoot, candidate) {
+  const errors = [];
+  if (typeof candidate !== 'string' || Buffer.byteLength(candidate) > 1024 * 1024
+      || Buffer.from(candidate, 'utf8').toString('utf8') !== candidate) {
+    return { valid: false, errors: ['queue candidate must be bounded UTF-8 text'] };
+  }
+  const items = [];
+  for (const line of candidate.split(/\r?\n/u)) {
+    const item = /^\s*(?:[-*]|\d+[.)])\s*\[([ xX])\]\s+(.+)$/u.exec(line);
+    if (item) items.push({ live: item[1] === ' ', title: item[2], lines: [] });
+    else if (items.length) items.at(-1).lines.push(line);
+  }
+  if (items.length === 0) errors.push('queue candidate must contain TODO items');
+  const graph = new Map();
+  const root = fs.realpathSync(workspaceRoot);
+  for (const item of items.filter(item => item.live)) {
+    const colon = item.title.indexOf(':');
+    if (colon < 1) { errors.push('queue item requires an identifier'); continue; }
+    const id = item.title.slice(0, colon).trim();
+    if (graph.has(id)) errors.push(`duplicate queue identifier: ${id}`);
+    const directives = [...item.title.slice(colon + 1).matchAll(/(Patch only|Create only)(.*?)(?=Patch only|Create only|$)/gu)];
+    for (const [, directive, scope] of directives) {
+      const targets = [...scope.matchAll(/`([^`]*)`/gu)].map(match => match[1]);
+      if (!targets.length) errors.push(`${id}: ${directive} requires an explicit target`);
+      for (const target of targets) {
+        if (!target || /[\\:\x00-\x1f*?\[\]{}]/u.test(target)
+            || target.split('/').some(part => !part || part === '.' || part === '..')) {
+          errors.push(`${id}: unsafe target: ${target}`); continue;
+        }
+        const absolute = path.join(root, target);
+        // Reject symlink aliases, including ancestors of not-yet-created files.
+        let cursor = root;
+        let unsafe = false;
+        for (const component of target.split('/')) {
+          cursor = path.join(cursor, component);
+          try {
+            if (fs.lstatSync(cursor).isSymbolicLink()) { unsafe = true; break; }
+          } catch (error) {
+            if (error.code !== 'ENOENT') { unsafe = true; break; }
+          }
+        }
+        if (unsafe) { errors.push(`${id}: unsafe symlink target: ${target}`); continue; }
+        const exists = fs.existsSync(absolute);
+        if (directive === 'Create only' && exists) errors.push(`${id}: Create only target already exists: ${target}`);
+        if (directive === 'Patch only' && (!exists || !fs.statSync(absolute).isFile())) {
+          errors.push(`${id}: Patch only target does not exist as a regular file: ${target}`);
+        }
+      }
+    }
+    const dependencyLine = item.lines.find(line => /^\s*Depends on:/u.test(line));
+    const dependencies = (dependencyLine?.replace(/^\s*Depends on:\s*/u, '') ?? '')
+      .split(/[,\s]+/u).filter(token => !/^`?<none>`?\.?$/u.test(token))
+      .map(token => token.replace(/^[^A-Za-z0-9-]+|[^A-Za-z0-9-]+$/gu, ''))
+      .filter(Boolean);
+    graph.set(id, dependencies);
+  }
+  const visiting = new Set();
+  const visited = new Set();
+  function visit(id) {
+    if (visiting.has(id)) return true;
+    if (visited.has(id)) return false;
+    visiting.add(id);
+    for (const dependency of graph.get(id) ?? []) {
+      if (graph.has(dependency) && visit(dependency)) return true;
+    }
+    visiting.delete(id);
+    visited.add(id);
+    return false;
+  }
+  for (const id of graph.keys()) {
+    if (visit(id)) { errors.push('queue has cyclic Depends on graph'); break; }
+  }
+  return { valid: errors.length === 0, errors };
+}
+
+function boundedValidationBytes(filename) {
+  const fd = fs.openSync(filename, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > 2 * 1024 * 1024) throw new Error('validation input is not a bounded regular file');
+    const buffer = Buffer.alloc(2 * 1024 * 1024 + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const read = fs.readSync(fd, buffer, length, buffer.length - length, null);
+      if (!read) break;
+      length += read;
+    }
+    if (length > 2 * 1024 * 1024) throw new Error('validation input exceeds byte limit');
+    return buffer.subarray(0, length);
+  } finally { fs.closeSync(fd); }
+}
+
+const validationDigest = bytes => `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+
+function boundedValidationStdin() {
+  const buffer = Buffer.alloc(1024 * 1024 + 1);
+  let length = 0;
+  while (length < buffer.length) {
+    const read = fs.readSync(0, buffer, length, buffer.length - length, null);
+    if (!read) break;
+    length += read;
+  }
+  if (length > 1024 * 1024) throw new Error('runtime validation input exceeds limit');
+  return buffer.subarray(0, length);
+}
+
+// Decomposition may replace only the bound selected block. General queue
+// validity alone cannot prove that a proposal preserved its parent lineage.
+export function validateDecompositionTransition(selected, current, hunks) {
+  const parent = selected.trimEnd();
+  if (!parent || !Array.isArray(hunks) || hunks.length !== 1
+      || hunks[0].old_text !== parent || typeof hunks[0].new_text !== 'string'
+      || hunks[0].occurrence != null) throw new Error('decomposition must replace exactly the selected parent');
+  const matches = uncheckedTodoBlocks(current).filter(block => block === parent);
+  if (matches.length !== 1) throw new Error('selected decomposition parent is missing or ambiguous');
+  const replacement = hunks[0].new_text;
+  const leaves = uncheckedTodoBlocks(replacement);
+  if (!leaves.length || checkedTodoBlocks(replacement).length
+      || leaves.reduce((remaining, leaf) => remaining.replace(leaf, ''), replacement).trim()) {
+    throw new Error('decomposition replacement must contain only unchecked leaves');
+  }
+  const parentId = todoId(parent);
+  const permittedSources = new Set([parentId, sourceTodoId(parent)].filter(Boolean));
+  const ids = new Set();
+  for (const leaf of leaves) {
+    const id = todoId(leaf);
+    if (!id || id === parentId || ids.has(id) || id === sourceTodoId(leaf)
+        || !permittedSources.has(sourceTodoId(leaf))) throw new Error('invalid decomposition parent lineage');
+    ids.add(id);
+  }
+}
+
+export function validateQueueRepairTransition(current, candidate) {
+  const originalIds = new Set(uncheckedTodoBlocks(current).map(todoId));
+  const ids = new Set();
+  for (const leaf of uncheckedTodoBlocks(candidate)) {
+    const id = todoId(leaf);
+    if (!id || ids.has(id)) throw new Error('queue repair must not create duplicate leaf IDs');
+    if (sourceTodoId(leaf) === id) throw new Error('queue repair must preserve the parent rather than reference itself');
+    if (!originalIds.has(id)) throw new Error('queue repair cannot introduce new leaf IDs; use an explicit decomposition transition');
+    ids.add(id);
+  }
+}
+
+export function validateDecompositionLeaves(candidate) {
+  const leaves = uncheckedTodoBlocks(candidate);
+  if (!leaves.length) throw new Error('decomposition requires unchecked leaves');
+  for (const leaf of leaves) {
+    for (const field of ['Source TODO:', 'Route:', 'Completion condition:', 'Depends on:', 'Forbidden changes:', 'Verification:']) {
+      const lines = leaf.split('\n').map(line => line.trim()).filter(line => line.startsWith(field));
+      if (lines.length !== 1 || !lines[0].slice(field.length).trim()) throw new Error(`decomposition leaf requires one nonempty ${field}`);
+    }
+    const lower = leaf.toLowerCase();
+    const title = firstLine(leaf).replace(/^(?:[-*]|\d+[.)])\s+\[ \]\s+[^:]+:\s*/u, '');
+    if (/^(?:read |inspect |investigate |analy[sz]e |確認|調査)/iu.test(title) && !lower.includes('fail-closed')) {
+      throw new Error('decomposition leaf cannot be read-only discovery');
+    }
+    if (!/\b(?:Patch|Create) only `[^`]+`/u.test(firstLine(leaf)) && !/blocker|fail-closed/u.test(lower)) {
+      throw new Error('decomposition leaf requires bounded scope or explicit blocker');
+    }
+    const verification = leaf.split('\n').map(line => line.trim()).find(line => line.startsWith('Verification:')).toLowerCase();
+    if (!/pnpm --workspace-root |cargo fmt |cargo check|cargo test|node (?:--test )?scripts\/|inspect |blocker|fail-closed/u.test(verification)) {
+      throw new Error('decomposition leaf requires bounded verification');
+    }
+    if (Buffer.byteLength(leaf) > 1800 || leaf.split('\n').length > 12 || todoId(leaf).includes('TODO-decompose-blocked-queue')) {
+      throw new Error('decomposition leaf must remain bounded');
+    }
+  }
+}
+
+export function validateRuntimeProposalRequest(bytes, workspaceRoot) {
+  if (bytes.length > 1024 * 1024) throw new Error('runtime validation input exceeds limit');
+  const request = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+  if (request.schema_version !== 1) throw new Error('invalid runtime validation request');
+  const stage = request.validation_stage ?? 'before_apply';
+  if (!['before_authorization', 'before_apply'].includes(stage)) throw new Error('invalid validation stage');
+  if (stage === 'before_authorization' && request.proposal?.proposal?.approval_status !== 'Pending') throw new Error('review requires a pending proposal');
+  const metadata = request.context?.metadata;
+  if (taskPolicyMetadataDigest(metadata) !== request.context?.metadata_sha256) throw new Error('stale policy metadata');
+  if (typeof metadata.selected_todo_text !== 'string'
+      || validationDigest(metadata.selected_todo_text) !== `sha256:${metadata.selected_todo_sha256}`) throw new Error('stale selected TODO');
+  const constraints = compileTaskConstraints(`## Selected TODO\n\n${metadata.selected_todo_text}\n`, {
+    state: metadata.bdk_state, queuePath: metadata.queue_relative_path
+  });
+  const proposal = request.proposal?.proposal;
+  const params = request.apply_params;
+  if (!proposal || !params || typeof params.run_id !== 'string' || !params.run_id
+      || typeof params.proposal_id !== 'string' || !params.proposal_id || params.proposal_id !== proposal.proposal_id
+      || !constraints.write_paths.includes(proposal.path)
+      || constraints.denied_write_paths?.includes(proposal.path)
+      || !constraints.write_operations.includes(proposal.operation)) throw new Error('proposal is outside bound controller policy');
+  const receipt = { schema_version: 1, valid: true, applied: false, request_sha256: validationDigest(bytes) };
+  if (proposal.path !== metadata.queue_relative_path) return receipt;
+  const pathCheck = validateQueueApplyCandidate(workspaceRoot, `- [ ] validation-target: Patch only \`${proposal.path}\``);
+  if (!pathCheck.valid) throw new Error(pathCheck.errors.join('; '));
+  const currentBytes = boundedValidationBytes(path.join(workspaceRoot, proposal.path));
+  if ((stage === 'before_apply' || params.expected_target_sha256 !== undefined)
+      && validationDigest(currentBytes) !== params.expected_target_sha256) throw new Error('stale queue target');
+  const current = new TextDecoder('utf-8', { fatal: true }).decode(currentBytes);
+  let candidate = current;
+  const singlePatch = Object.hasOwn(params, 'patch_old_text') || Object.hasOwn(params, 'patch_new_text');
+  if (singlePatch && params.patch_hunks !== undefined) throw new Error('conflicting patch material');
+  // The CLI transports an unambiguous single hunk using these two fields;
+  // occurrence-aware and multi-hunk proposals use patch_hunks instead.
+  const patchHunks = singlePatch
+    ? [{ old_text: params.patch_old_text, new_text: params.patch_new_text }]
+    : params.patch_hunks;
+  if (proposal.operation === 'patch_file'
+      && (!Array.isArray(patchHunks) || patchHunks.length < 1 || patchHunks.length > 5)) throw new Error('missing bounded patch material');
+  if (metadata.bdk_state === 'decompose_todo') {
+    if (proposal.operation !== 'patch_file') throw new Error('decomposition requires a bounded patch');
+    validateDecompositionTransition(metadata.selected_todo_text, candidate, patchHunks);
+    validateDecompositionLeaves(patchHunks[0].new_text);
+  }
+  if (proposal.operation === 'patch_file') {
+    const ranges = [];
+    for (const hunk of patchHunks) {
+      if (typeof hunk.old_text !== 'string' || !hunk.old_text || typeof hunk.new_text !== 'string') throw new Error('invalid patch material');
+      const matches = [];
+      let offset = 0;
+      while ((offset = candidate.indexOf(hunk.old_text, offset)) !== -1) {
+        matches.push(offset); offset += hunk.old_text.length;
+      }
+      const occurrence = hunk.occurrence;
+      if ((occurrence == null && matches.length !== 1)
+          || (occurrence != null && (!Number.isInteger(occurrence) || occurrence < 1 || occurrence > matches.length))) throw new Error('ambiguous or stale patch material');
+      const start = matches[(occurrence ?? 1) - 1];
+      const end = start + hunk.old_text.length;
+      const word = character => character != null && /[\p{L}\p{N}_]/u.test(character);
+      if ((word([...candidate.slice(0, start)].at(-1)) && word([...hunk.old_text][0]))
+          || (word([...hunk.old_text].at(-1)) && word([...candidate.slice(end)][0]))) throw new Error('patch splits a word');
+      ranges.push({ start, end, replacement: hunk.new_text });
+    }
+    ranges.sort((a, b) => a.start - b.start);
+    let cursor = 0;
+    let replacement = '';
+    for (const range of ranges) {
+      if (range.start < cursor) throw new Error('overlapping patch material');
+      replacement += candidate.slice(cursor, range.start) + range.replacement;
+      cursor = range.end;
+    }
+    candidate = replacement + candidate.slice(cursor);
+  } else if (proposal.operation === 'replace_file' && typeof params.replacement_content === 'string') {
+    candidate = params.replacement_content;
+  } else throw new Error('unsupported queue apply operation');
+  if (metadata.bdk_state === 'todo_queue_repair') validateQueueRepairTransition(current, candidate);
+  const validation = validateQueueApplyCandidate(workspaceRoot, candidate);
+  if (validation.valid) validation.errors.push(...validateTodoDecompositionCandidate(workspaceRoot, metadata.queue_relative_path, '.brownie/todo-breakdown.md', { todoText: candidate }));
+  return { ...receipt, valid: validation.errors.length === 0, errors: validation.errors.slice(0, 32), candidate_sha256: validationDigest(candidate) };
+}
+
+// A read-only validation receipt, not an apply authorization. The caller must
+// compare request/candidate hashes and retain the normal Runtime preflight.
+export function validateQueueApplyRequest({ workspaceRoot, requestPath, requestSha256, todoPath, breakdownPath }) {
+  if (typeof todoPath !== 'string' || /[`\r\n]/u.test(todoPath)) throw new Error('invalid queue target path');
+  const bytes = boundedValidationBytes(requestPath);
+  if (validationDigest(bytes) !== requestSha256) throw new Error('stale validation request');
+  const request = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+  const keys = ['schema_version', 'proposal_id', 'run_id', 'path', 'expected_target_sha256', 'candidate'];
+  if (!request || Array.isArray(request) || typeof request !== 'object'
+      || Object.keys(request).some(key => !keys.includes(key))
+      || keys.some(key => !(key in request)) || request.schema_version !== 1
+      || !['proposal_id', 'run_id'].every(key => typeof request[key] === 'string' && /^[A-Za-z0-9_.-]{1,256}$/u.test(request[key]))
+      || request.path !== todoPath || typeof request.candidate !== 'string') {
+    throw new Error('invalid queue validation request');
+  }
+  // Validate the configured target itself before opening it, including aliases.
+  const targetCheck = validateQueueApplyCandidate(workspaceRoot, `- [ ] validation-target: Patch only \`${todoPath}\``);
+  if (!targetCheck.valid) throw new Error(targetCheck.errors.join('; '));
+  const current = boundedValidationBytes(path.join(workspaceRoot, todoPath));
+  if (validationDigest(current) !== request.expected_target_sha256) throw new Error('stale queue target');
+  const result = validateQueueApplyCandidate(workspaceRoot, request.candidate);
+  if (result.valid) result.errors.push(...validateTodoDecompositionCandidate(workspaceRoot, todoPath, breakdownPath, { todoText: request.candidate }));
+  result.valid = result.errors.length === 0;
+  return {
+    schema_version: 1, ...result, applied: false,
+    request_sha256: requestSha256, proposal_id: request.proposal_id, run_id: request.run_id,
+    expected_target_sha256: request.expected_target_sha256,
+    candidate_sha256: validationDigest(request.candidate)
+  };
+}
 
 function parseArgs(argv) {
   const args = new Map();
@@ -135,7 +421,7 @@ function packageScripts() {
   }
 }
 
-function uncheckedTodoBlocks(text) {
+export function uncheckedTodoBlocks(text) {
   const starts = [];
   const pattern = /^(?:[-*]|\d+[.)])\s+\[[ xX]\]\s+/gm;
   let match;
@@ -144,7 +430,7 @@ function uncheckedTodoBlocks(text) {
   }
   return starts.map((start, index) => {
     const end = index + 1 < starts.length ? starts[index + 1] : text.length;
-    return text.slice(start, end).trimEnd();
+    return text.slice(start, end).split(/^## /mu, 1)[0].trimEnd();
   }).filter((block) => /^(?:[-*]|\d+[.)])\s+\[\s\]\s+/u.test(block));
 }
 
@@ -1724,7 +2010,13 @@ if (process.argv[1] === __filename) {
   const args = parseArgs(process.argv);
   let result;
   try {
-    result = repairTodoDecomposition({
+    result = args.has('validate-runtime-proposal') ? validateRuntimeProposalRequest(boundedValidationStdin(), process.cwd()) : args.has('validate-proposal') ? validateQueueApplyRequest({
+      workspaceRoot: repoRoot,
+      requestPath: args.get('validate-proposal'),
+      requestSha256: args.get('request-sha256'),
+      todoPath: args.get('todo') ?? '.brownie/todo.md',
+      breakdownPath: args.get('breakdown') ?? '.brownie/todo-breakdown.md'
+    }) : repairTodoDecomposition({
       claimPath: args.get('claim') ?? '.brownie/private/phase-loop/todo-claims/current.json',
       todoPath: args.get('todo') ?? '.brownie/todo.md',
       breakdownPath: args.get('breakdown') ?? '.brownie/todo-breakdown.md',
@@ -1733,14 +2025,15 @@ if (process.argv[1] === __filename) {
   } catch (error) {
     result = {
       schema_version: 1,
+      ...(args.has('validate-proposal') || args.has('validate-runtime-proposal') ? { valid: false } : {}),
       applied: false,
       eligible: true,
       blocked: true,
-      reason: error.code === 'workspace_package_json_invalid' ? error.code : 'todo_decomposition_repair_failed',
+      reason: args.has('validate-proposal') || args.has('validate-runtime-proposal') ? 'queue_proposal_validation_failed' : error.code === 'workspace_package_json_invalid' ? error.code : 'todo_decomposition_repair_failed',
       error_code: error.code ?? 'todo_decomposition_repair_failed',
       error_message: error.message
     };
   }
   console.log(JSON.stringify(result, null, 2));
-  process.exit(result.applied ? 0 : result.eligible ? 1 : 2);
+  process.exit(args.has('validate-proposal') || args.has('validate-runtime-proposal') ? (result.valid === true ? 0 : 1) : (result.applied ? 0 : result.eligible ? 1 : 2));
 }

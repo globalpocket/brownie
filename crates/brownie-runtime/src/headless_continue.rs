@@ -6796,6 +6796,7 @@ mod chronological_scope_tests {
             let mut task = store
                 .tasks()
                 .start_task(TaskStartParams {
+                    execution_constraints: None,
                     goal: session.to_string(),
                     mode_id: Some("orchestrator".to_string()),
                     verification_recovery_source: None,

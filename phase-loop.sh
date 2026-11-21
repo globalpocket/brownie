@@ -16147,12 +16147,18 @@ metadata = {
     "prompt_max_bytes": prompt_max_bytes,
     "selected_todo_bytes": len(selected_todo.encode("utf-8")),
     "selected_todo_sha256": sha256_text(selected_todo),
+    "selected_todo_text": selected_todo,
     "selected_todo_complete": selected_todo_complete,
     "selected_todo_completion_reason": selected_todo_completion_reason,
     "bdk_state": bdk_state,
     "llm_route": llm_route,
     "context_hints": context_hints,
     "todo_path": str(todo_path),
+    # An external controller queue is not a Runtime workspace capability.
+    "queue_relative_path": (
+        todo_path.resolve().relative_to(workspace_root_path.resolve()).as_posix()
+        if todo_path.resolve().is_relative_to(workspace_root_path.resolve()) else None
+    ),
     "todo_sha256": sha256_text(todo_text),
     "todo_line_count": todo_line_count,
     "todo_snapshot_lines": min(todo_line_count, todo_snapshot_lines),
@@ -20605,6 +20611,19 @@ PY
       fi
     fi
   fi
+  # Controller-owned queue repairs above may finish without any Runtime task.
+  # Compile fresh execution authority only after those replan transitions and
+  # the final claim/prompt refresh; resumes retain their original bound policy.
+  if [ "$use_resume" -ne 1 ]; then
+    if ! node "$ROOT_DIR/scripts/phase-loop-task-constraints.mjs" "$effective_prompt" \
+        "${effective_prompt%.prompt.md}.prompt.meta.json" "${effective_prompt%.prompt.md}.constraints.json"; then
+      detail="Selected TODO has no valid bounded Runtime execution constraints; re-estimate or split its scope before dispatch."
+      printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+      write_status "blocked" "$detail" "$run_stamp" "74" "${CONSECUTIVE_FAILURES:-0}"
+      write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"execution_constraint_compilation_failed"}'
+      return 74
+    fi
+  fi
   # Runtime uses its process status to distinguish a failed apply from a
   # successful continuation. Capture it explicitly: helper functions invoked
   # earlier may have enabled errexit, and otherwise bash exits before the
@@ -20634,6 +20653,15 @@ PY
 )" || exit 70
     mkdir -p "$runtime_claim_store" || exit 70
     export BROWNIE_STORE_ROOT="$runtime_claim_store"
+    # Retain the original claim's policy on resume; never rebuild it from a
+    # different selected TODO or silently continue without its validator.
+    runtime_validator="$runtime_claim_store/proposal-validator.json"
+    if [ "$use_resume" -ne 1 ]; then
+      cp "${effective_prompt%.prompt.md}.constraints.json.validator.json" "$runtime_validator.tmp" || exit 70
+      chmod 600 "$runtime_validator.tmp" || exit 70
+      mv "$runtime_validator.tmp" "$runtime_validator" || exit 70
+    fi
+    [ -f "$runtime_validator" ] && [ ! -L "$runtime_validator" ] || exit 70
     export PHASE_LOOP_CONTROL_ROOT
     export BROWNIE_PHASE_LOOP_ADMISSION_FILE="$runtime_admission_snapshot"
     export BROWNIE_PHASE_LOOP_CLAIM_ID="$(claim_field claim_id)"
@@ -20650,12 +20678,12 @@ PY
       # the intentionally ordinary verification resume explicit instead of
       # conflating that portable-shell edge case with a Runtime failure.
       if [ "${#objective_apply_resume_args[@]}" -gt 0 ]; then
-        run_with_portable_timeout "$brownie_timeout_seconds" "$BROWNIE_BIN" --json resume "${objective_apply_resume_args[@]}"
+        run_with_portable_timeout "$brownie_timeout_seconds" "$BROWNIE_BIN" --json --proposal-validator-file "$runtime_validator" resume "${objective_apply_resume_args[@]}"
       else
-        run_with_portable_timeout "$brownie_timeout_seconds" "$BROWNIE_BIN" --json resume
+        run_with_portable_timeout "$brownie_timeout_seconds" "$BROWNIE_BIN" --json --proposal-validator-file "$runtime_validator" resume
       fi
     else
-      run_with_portable_timeout "$brownie_timeout_seconds" "$BROWNIE_BIN" --json run --file "$effective_prompt"
+      run_with_portable_timeout "$brownie_timeout_seconds" "$BROWNIE_BIN" --json --proposal-validator-file "$runtime_validator" run --file "$effective_prompt" --constraints-file "${effective_prompt%.prompt.md}.constraints.json"
     fi
   ) > "$stdout_log" 2> "$stderr_log"
   exit_code=$?

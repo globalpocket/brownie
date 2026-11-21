@@ -2002,6 +2002,7 @@ mod tests {
 
     fn task_record() -> TaskRecord {
         TaskRecord {
+            execution_constraints: None,
             task_id: "task_1".into(),
             run_id: "run_1".into(),
             goal: "Ship Phase 1.2".into(),

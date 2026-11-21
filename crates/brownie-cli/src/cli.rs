@@ -8,16 +8,36 @@ pub struct Cli {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliCommand {
-    Help { topic: Option<HelpTopic> },
+    WithProposalValidator {
+        path: String,
+        command: Box<CliCommand>,
+    },
+    Help {
+        topic: Option<HelpTopic>,
+    },
     Version,
     BuildProvenance,
-    Run { objective: String },
-    RunFile { path: String },
-    Resume { scope: Option<ResumeScope> },
+    Run {
+        objective: String,
+        execution_constraints: Option<brownie_protocol::TaskExecutionConstraints>,
+    },
+    RunFile {
+        path: String,
+        constraints_path: Option<String>,
+    },
+    Resume {
+        scope: Option<ResumeScope>,
+    },
     Status,
-    Inspect { target: InspectTarget },
-    List { target: ListTarget },
-    Mode { target: ModeTarget },
+    Inspect {
+        target: InspectTarget,
+    },
+    List {
+        target: ListTarget,
+    },
+    Mode {
+        target: ModeTarget,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,9 +103,24 @@ impl Cli {
         }
 
         let mut json = false;
+        let mut proposal_validator = None;
         let mut command_index = 0;
         while command_index < args.len() {
             match args[command_index].as_str() {
+                "--proposal-validator-file" => {
+                    if proposal_validator.is_some() {
+                        return Err(CliError::InvalidCommand(
+                            "duplicate proposal validator".into(),
+                        ));
+                    }
+                    proposal_validator = Some(
+                        args.get(command_index + 1)
+                            .filter(|value| !value.is_empty())
+                            .ok_or(CliError::MissingValue("--proposal-validator-file"))?
+                            .clone(),
+                    );
+                    command_index += 2;
+                }
                 "--json" => {
                     json = true;
                     command_index += 1;
@@ -126,6 +161,22 @@ impl Cli {
             other => return Err(CliError::UnknownCommand(other.to_string())),
         };
 
+        let command = if let Some(path) = proposal_validator {
+            if !matches!(
+                command,
+                CliCommand::Run { .. } | CliCommand::RunFile { .. } | CliCommand::Resume { .. }
+            ) {
+                return Err(CliError::InvalidCommand(
+                    "proposal validator requires run or resume".into(),
+                ));
+            }
+            CliCommand::WithProposalValidator {
+                path,
+                command: Box::new(command),
+            }
+        } else {
+            command
+        };
         Ok(Self { json, command })
     }
 
@@ -135,6 +186,7 @@ impl Cli {
             "",
             "Usage:",
             "  brownie [--json] <command>",
+            "  brownie [--json] --proposal-validator-file <json-path> <run|resume> ...",
             "  brownie help <topic>",
             "",
             "Commands:",
@@ -169,7 +221,7 @@ impl Cli {
                 "",
                 "Usage:",
                 "  brownie run <objective>",
-                "  brownie run --file <path>",
+                "  brownie run --file <path> [--constraints-file <json-path>]",
                 "  brownie --json run <objective>",
                 "  brownie --json run --file <path>",
                 "",
@@ -180,6 +232,7 @@ impl Cli {
                 "Set BROWNIE_CLI_RUN_MODE_ID to request a specific runtime mode for the admitted task.",
                 "For strict OpenAI-compatible provider runs, use BROWNIE_CLI_RUN_MODE_ID=provider-runner together with BROWNIE_LLM_ALLOW_PROVIDER_ACCESS=true.",
                 "One invocation performs bounded progress, persists through the runtime, and exits.",
+                "An explicit --proposal-validator-file before run or resume can veto automatic proposal application; it cannot grant runtime permission.",
                 "JSON output includes an automation object and controller_action for external loops.",
                 "",
                 "Examples:",
@@ -277,22 +330,37 @@ impl Cli {
 
 fn parse_run(args: &[String]) -> Result<CliCommand, CliError> {
     match args {
+        [flag, path, constraints_flag, constraints_path]
+            if (flag == "--file" || flag == "-f") && constraints_flag == "--constraints-file" =>
+        {
+            if path.trim().is_empty() || constraints_path.trim().is_empty() {
+                return Err(CliError::MissingValue("file"));
+            }
+            Ok(CliCommand::RunFile {
+                path: path.clone(),
+                constraints_path: Some(constraints_path.clone()),
+            })
+        }
         [flag, path] if flag == "--file" || flag == "-f" => {
             if path.trim().is_empty() {
                 Err(CliError::MissingValue("file"))
             } else {
                 Ok(CliCommand::RunFile {
+                    constraints_path: None,
                     path: path.to_string(),
                 })
             }
         }
         [flag] if flag == "--file" || flag == "-f" => Err(CliError::MissingValue("file")),
         [flag, ..] if flag == "--file" || flag == "-f" => Err(CliError::InvalidCommand(
-            "run --file expects exactly one path".to_string(),
+            "run --file expects one path and optional --constraints-file PATH".to_string(),
         )),
         _ => {
             let objective = join_required_tail(args, "objective")?;
-            Ok(CliCommand::Run { objective })
+            Ok(CliCommand::Run {
+                objective,
+                execution_constraints: None,
+            })
         }
     }
 }

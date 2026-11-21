@@ -4199,6 +4199,7 @@
       "group_id": "task-lifecycle",
       "method": "task.start",
       "optional_fields": [
+        "execution_constraints",
         "mode_id",
         "verification_recovery_source",
         "patch_apply_recovery_source",
@@ -4207,11 +4208,19 @@
         "product_continuation_source"
       ],
       "param_type": "TaskStartParams",
-      "request_recursive_schema_fingerprint": "shape-fnv1a64:b0647bf476315904",
+      "request_recursive_schema_fingerprint": "shape-fnv1a64:04b74c0ab4aaa969",
       "request_schema": {
         "deny_unknown_fields": true,
-        "field_shape_fingerprint": "shape-fnv1a64:98bc5f5db7ae4fac",
+        "field_shape_fingerprint": "shape-fnv1a64:195a7ed5e9a205c8",
         "fields": [
+          {
+            "name": "execution_constraints",
+            "nullable": true,
+            "repeated": false,
+            "required": false,
+            "rust_type": "Option<TaskExecutionConstraints>",
+            "semantic_type": "object_or_enum_ref"
+          },
           {
             "name": "goal",
             "nullable": false,
@@ -4270,6 +4279,7 @@
           }
         ],
         "nullable_fields": [
+          "execution_constraints",
           "mode_id",
           "verification_recovery_source",
           "patch_apply_recovery_source",
@@ -4278,6 +4288,7 @@
           "product_continuation_source"
         ],
         "optional_fields": [
+          "execution_constraints",
           "mode_id",
           "verification_recovery_source",
           "patch_apply_recovery_source",
@@ -4389,7 +4400,7 @@
       "result_schema_ref": "#/type_schemas/TaskStartResult",
       "result_semantics": "TaskStartResult",
       "result_type": "TaskStartResult",
-      "schema_fingerprint": "shape-fnv1a64:e787bb017d91b0ad",
+      "schema_fingerprint": "shape-fnv1a64:c29df5dc4b7d8e2f",
       "trace_binding_validation": {
         "request_schema_status": "valid",
         "result_schema_status": "valid",
@@ -4438,11 +4449,19 @@
       "required_fields": [
         "task_id"
       ],
-      "result_recursive_schema_fingerprint": "shape-fnv1a64:fb775e2d5c068403",
+      "result_recursive_schema_fingerprint": "shape-fnv1a64:a51a5ac9fd7c0540",
       "result_schema": {
         "deny_unknown_fields": false,
-        "field_shape_fingerprint": "shape-fnv1a64:c403e977c6508e17",
+        "field_shape_fingerprint": "shape-fnv1a64:fdd42e7034a8a463",
         "fields": [
+          {
+            "name": "execution_constraints",
+            "nullable": true,
+            "repeated": false,
+            "required": false,
+            "rust_type": "Option<TaskExecutionConstraints>",
+            "semantic_type": "object_or_enum_ref"
+          },
           {
             "name": "task_id",
             "nullable": false,
@@ -4629,6 +4648,7 @@
           }
         ],
         "nullable_fields": [
+          "execution_constraints",
           "mode_id",
           "parent_task_id",
           "parent_run_id",
@@ -4648,6 +4668,7 @@
           "runtime_deadline"
         ],
         "optional_fields": [
+          "execution_constraints",
           "mode_id",
           "parent_task_id",
           "parent_run_id",
@@ -4679,7 +4700,7 @@
       "result_schema_ref": "#/type_schemas/TaskRecord",
       "result_semantics": "TaskRecord",
       "result_type": "TaskRecord",
-      "schema_fingerprint": "shape-fnv1a64:f6285e043316531f",
+      "schema_fingerprint": "shape-fnv1a64:2084ecc774504be3",
       "trace_binding_validation": {
         "request_schema_status": "valid",
         "result_schema_status": "valid",
@@ -5206,7 +5227,7 @@
       "required_fields": [
         "task_id"
       ],
-      "result_recursive_schema_fingerprint": "shape-fnv1a64:2630f7628da98d3e",
+      "result_recursive_schema_fingerprint": "shape-fnv1a64:783153d589d99eed",
       "result_schema": {
         "deny_unknown_fields": false,
         "field_shape_fingerprint": "shape-fnv1a64:f8daecb217ef1613",
@@ -5261,7 +5282,7 @@
       "result_schema_ref": "#/type_schemas/TaskInspectResult",
       "result_semantics": "TaskInspectResult",
       "result_type": "TaskInspectResult",
-      "schema_fingerprint": "shape-fnv1a64:a6c6127fe8218b03",
+      "schema_fingerprint": "shape-fnv1a64:f999695ef797381a",
       "trace_binding_validation": {
         "request_schema_status": "valid",
         "result_schema_status": "valid",
@@ -5313,7 +5334,7 @@
       "request_schema_ref": "#/type_schemas/TaskListParams",
       "request_semantics": "List bounded task progress overview",
       "required_fields": [],
-      "result_recursive_schema_fingerprint": "shape-fnv1a64:fe02efbb6ad1de00",
+      "result_recursive_schema_fingerprint": "shape-fnv1a64:ec950315ca2fc759",
       "result_schema": {
         "deny_unknown_fields": false,
         "field_shape_fingerprint": "shape-fnv1a64:25faeef432d4903f",
@@ -5346,7 +5367,7 @@
       "result_schema_ref": "#/type_schemas/TaskListResult",
       "result_semantics": "TaskListResult",
       "result_type": "TaskListResult",
-      "schema_fingerprint": "shape-fnv1a64:2cd1440ae03a42a0",
+      "schema_fingerprint": "shape-fnv1a64:9d76648be7dad020",
       "trace_binding_validation": {
         "request_schema_status": "valid",
         "result_schema_status": "valid",
@@ -6660,7 +6681,7 @@
         "journey_execution"
       ],
       "param_type": "HeadlessRunDriveParams",
-      "request_recursive_schema_fingerprint": "shape-fnv1a64:fc7deef592bf049e",
+      "request_recursive_schema_fingerprint": "shape-fnv1a64:9114ce732ffe1349",
       "request_schema": {
         "deny_unknown_fields": true,
         "field_shape_fingerprint": "shape-fnv1a64:8e23cae0f3b72981",
@@ -7238,7 +7259,7 @@
       "result_schema_ref": "#/type_schemas/HeadlessRunDriveResult",
       "result_semantics": "HeadlessRunDriveResult",
       "result_type": "HeadlessRunDriveResult",
-      "schema_fingerprint": "shape-fnv1a64:0636128d8168ae6e",
+      "schema_fingerprint": "shape-fnv1a64:def736b7342d7c6d",
       "trace_binding_validation": {
         "request_schema_status": "valid",
         "result_schema_status": "valid",
@@ -19319,6 +19340,16 @@
         "HeadlessRunJourneyTaskStartEnvelope": {
           "additionalProperties": false,
           "properties": {
+            "execution_constraints": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TaskExecutionConstraints"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "goal": {
               "type": "string"
             },
@@ -20173,6 +20204,63 @@
             "source_run_id",
             "source_task_id"
           ],
+          "type": "object"
+        },
+        "TaskExecutionConstraints": {
+          "additionalProperties": false,
+          "properties": {
+            "denied_read_paths": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "denied_write_paths": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "max_workspace_reads": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "read_paths": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "requires_workspace_write_proposal": {
+              "default": false,
+              "type": "boolean"
+            },
+            "write_operations": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "write_paths": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
           "type": "object"
         },
         "TaskRunContextBudget": {
@@ -33877,10 +33965,77 @@
           ],
           "type": "object"
         },
+        "TaskExecutionConstraints": {
+          "additionalProperties": false,
+          "properties": {
+            "denied_read_paths": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "denied_write_paths": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "max_workspace_reads": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "read_paths": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "requires_workspace_write_proposal": {
+              "default": false,
+              "type": "boolean"
+            },
+            "write_operations": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "write_paths": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        },
         "TaskRecord": {
           "properties": {
             "created_at": {
               "type": "string"
+            },
+            "execution_constraints": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TaskExecutionConstraints"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "goal": {
               "type": "string"
@@ -35012,6 +35167,63 @@
           ],
           "type": "object"
         },
+        "TaskExecutionConstraints": {
+          "additionalProperties": false,
+          "properties": {
+            "denied_read_paths": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "denied_write_paths": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "max_workspace_reads": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "read_paths": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "requires_workspace_write_proposal": {
+              "default": false,
+              "type": "boolean"
+            },
+            "write_operations": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "write_paths": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        },
         "TaskListHeadlessRouteCandidate": {
           "properties": {
             "aggregate_sequence": {
@@ -35412,6 +35624,16 @@
           "properties": {
             "created_at": {
               "type": "string"
+            },
+            "execution_constraints": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TaskExecutionConstraints"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "goal": {
               "type": "string"
@@ -36407,6 +36629,63 @@
           ],
           "type": "object"
         },
+        "TaskExecutionConstraints": {
+          "additionalProperties": false,
+          "properties": {
+            "denied_read_paths": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "denied_write_paths": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "max_workspace_reads": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "read_paths": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "requires_workspace_write_proposal": {
+              "default": false,
+              "type": "boolean"
+            },
+            "write_operations": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "write_paths": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        },
         "TaskStatus": {
           "enum": [
             "Created",
@@ -36618,6 +36897,16 @@
       "properties": {
         "created_at": {
           "type": "string"
+        },
+        "execution_constraints": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TaskExecutionConstraints"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "goal": {
           "type": "string"
@@ -38355,6 +38644,63 @@
           ],
           "type": "object"
         },
+        "TaskExecutionConstraints": {
+          "additionalProperties": false,
+          "properties": {
+            "denied_read_paths": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "denied_write_paths": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "max_workspace_reads": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "read_paths": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "requires_workspace_write_proposal": {
+              "default": false,
+              "type": "boolean"
+            },
+            "write_operations": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "write_paths": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        },
         "VerificationRecoveryRetrySource": {
           "properties": {
             "apply_id": {
@@ -38425,6 +38771,16 @@
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,
       "properties": {
+        "execution_constraints": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TaskExecutionConstraints"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "goal": {
           "type": "string"
         },
@@ -40131,8 +40487,9 @@
       },
       {
         "deny_unknown_fields": true,
-        "field_count": 7,
+        "field_count": 8,
         "optional_fields": [
+          "execution_constraints",
           "mode_id",
           "verification_recovery_source",
           "patch_apply_recovery_source",

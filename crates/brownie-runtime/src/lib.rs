@@ -1044,6 +1044,7 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
         Err(message) => return error_response(id, -32602, &message),
     };
     let TaskStartParams {
+        execution_constraints,
         goal,
         mode_id,
         verification_recovery_source,
@@ -1052,6 +1053,12 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
         llm_provider_failure_retry_source,
         product_continuation_source,
     } = params;
+
+    if let Some(constraints) = &execution_constraints {
+        if let Err(message) = constraints.validate() {
+            return error_response(id, -32602, &format!("invalid params: {message}"));
+        }
+    }
 
     if goal.trim().is_empty() {
         return error_response(id, -32602, "invalid params: goal must not be empty");
@@ -1077,6 +1084,9 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
     .into_iter()
     .filter(|present| *present)
     .count();
+    if start_source_count > 0 && execution_constraints.is_some() {
+        return error_response(id, -32602, "invalid params: recovery inherits source execution constraints; replacement constraints are not allowed");
+    }
     if start_source_count > 1 {
         return error_response(
             id,
@@ -1364,6 +1374,7 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
         }
     } else {
         let params = TaskStartParams {
+            execution_constraints,
             goal,
             mode_id: Some(policy.mode_id.clone()),
             verification_recovery_source: None,
@@ -2671,8 +2682,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
         };
         let mut followup_attempts = 0;
-        let task_requires_workspace_write =
-            task_goal_requires_workspace_write_proposal(&running.goal);
+        let task_requires_workspace_write = task_requires_workspace_write_proposal(&running);
         loop {
             let second_pass_response_index = followup_events
                 .iter()
@@ -2730,7 +2740,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             let no_workspace_write_proposal = !followup_events
                 .iter()
                 .any(|event| event.kind == LedgerEventKind::WorkspacePatchProposed);
-            let followup_write_missing = task_goal_requires_workspace_write_proposal(&running.goal)
+            let followup_write_missing = task_requires_workspace_write_proposal(&running)
                 && !followup_events
                     .iter()
                     .any(is_valid_workspace_patch_proposal_event);
@@ -2794,21 +2804,6 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                 && task_goal_enforces_workspace_read_budget_before_write(&running.goal)
                 && workspace_read_completed_count(&followup_events) >= 2
             {
-                if let Err(error) = append_todo_decomposition_blocker_after_read_only_stall(
-                    &store, &running, &policy, false, false,
-                ) {
-                    let _ = store.tasks().append_task_event_with_payload(
-                        &running,
-                        LedgerEventKind::ToolExecutionFailed,
-                        Some(json!({
-                            "tool_id": WORKSPACE_WRITE_TOOL_ID,
-                            "status": "Failed",
-                            "reason": format!(
-                                "failed to synthesize live TODO queue read-budget follow-up before another LLM request: {error}"
-                            ),
-                        })),
-                    );
-                }
                 break;
             }
             // A permitted read is context acquisition, not a failed attempt to
@@ -2982,35 +2977,6 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         }
     }
 
-    let pre_completion_events = match store.tasks().read_ledger_events(&running.run_id) {
-        Ok(events) => events,
-        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
-    };
-    if task_goal_requires_workspace_write_proposal(&running.goal)
-        && !pre_completion_events
-            .iter()
-            .any(|event| event.kind == LedgerEventKind::WorkspacePatchProposed)
-    {
-        if let Err(error) = append_todo_decomposition_blocker_after_read_only_stall(
-            &store,
-            &running,
-            &policy,
-            run_has_duplicate_workspace_read_denial(&pre_completion_events),
-            run_has_workspace_read_failure(&pre_completion_events),
-        ) {
-            let _ = store.tasks().append_task_event_with_payload(
-                &running,
-                LedgerEventKind::ToolExecutionFailed,
-                Some(json!({
-                    "tool_id": WORKSPACE_WRITE_TOOL_ID,
-                    "status": "Failed",
-                    "reason": format!(
-                        "failed to synthesize live TODO queue decomposition workspace.write proposal: {error}"
-                    ),
-                })),
-            );
-        }
-    }
     let completion_gate_events = match store.tasks().read_ledger_events(&running.run_id) {
         Ok(events) => events,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
@@ -3045,7 +3011,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                 && !is_recoverable_workspace_read_denial_for_followup(event)
                 && !is_recoverable_workspace_write_rejection_for_followup(
                     event,
-                    task_goal_requires_workspace_write_proposal(&running.goal),
+                    task_requires_workspace_write_proposal(&running),
                 )
         })
         .count();
@@ -3075,7 +3041,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         };
         agent_loop_final_response_content.clear();
     }
-    if task_goal_requires_workspace_write_proposal(&running.goal)
+    if task_requires_workspace_write_proposal(&running)
         && !completion_gate_events
             .iter()
             .any(is_valid_workspace_patch_proposal_event)
@@ -3257,10 +3223,6 @@ fn task_goal_requires_tool_intent(goal: &str) -> bool {
     .any(|needle| goal.contains(needle))
 }
 
-fn run_has_duplicate_workspace_read_denial(events: &[LedgerEvent]) -> bool {
-    events.iter().any(is_duplicate_workspace_read_denial)
-}
-
 fn is_recoverable_workspace_read_denial_for_followup(event: &LedgerEvent) -> bool {
     matches!(
         event.kind,
@@ -3291,31 +3253,6 @@ fn is_recoverable_workspace_read_denial_for_followup(event: &LedgerEvent) -> boo
             })
 }
 
-fn is_duplicate_workspace_read_denial(event: &LedgerEvent) -> bool {
-    matches!(
-        event.kind,
-        LedgerEventKind::ToolIntentDenied | LedgerEventKind::ToolExecutionDenied
-    ) && event
-        .payload
-        .as_ref()
-        .and_then(|payload| payload.get("tool_id"))
-        .and_then(Value::as_str)
-        == Some(WORKSPACE_READ_TOOL_ID)
-        && event
-            .payload
-            .as_ref()
-            .and_then(|payload| payload.get("reason"))
-            .and_then(Value::as_str)
-            .is_some_and(|reason| {
-                reason.contains("Duplicate workspace.read")
-                    || reason.contains("Additional workspace.read is not progress")
-                    || reason.contains("Repair feedback already embeds previous workspace.read")
-                    || (reason.contains("Selected TODO says to patch only")
-                        && reason.contains("is not progress")
-                        && reason.contains("request workspace.write"))
-            })
-}
-
 fn is_recoverable_workspace_write_rejection_for_followup(
     event: &LedgerEvent,
     task_requires_workspace_write: bool,
@@ -3333,10 +3270,10 @@ fn is_recoverable_workspace_write_rejection_for_followup(
             && tool_id == Some(WORKSPACE_WRITE_TOOL_ID))
             || (matches!(code, Some("block_too_large" | "missing_closing_fence"))
                 && tool_id == Some("<parse-error>"))))
-        // This code is emitted only by the TODO decomposition provenance gate;
-        // its presence is the authoritative evidence that a write repair is
-        // required even when the natural-language goal omits the word "write".
-        || (code == Some("todo_md_write_denied_for_implementation_todo")
+        // An admitted write constraint was violated. A bounded repair pass
+        // may correct the request even when the goal omits "write"; the same
+        // constraint is enforced again and this event is not edit evidence.
+        || (code == Some("task_execution_constraint_denied")
             && tool_id == Some(WORKSPACE_WRITE_TOOL_ID))
 }
 
@@ -3404,15 +3341,6 @@ fn workspace_write_parser_repair_stall_summary(events: &[LedgerEvent]) -> Option
     })
 }
 
-fn run_has_workspace_read_failure(events: &[LedgerEvent]) -> bool {
-    events.iter().any(|event| {
-        event.kind == LedgerEventKind::ToolExecutionFailed
-            && event.payload.as_ref().is_some_and(|payload| {
-                payload.get("tool_id").and_then(Value::as_str) == Some(WORKSPACE_READ_TOOL_ID)
-            })
-    })
-}
-
 fn is_valid_workspace_patch_proposal_event(event: &LedgerEvent) -> bool {
     event.kind == LedgerEventKind::WorkspacePatchProposed
         && event
@@ -3471,6 +3399,13 @@ fn workspace_read_completed_count(events: &[LedgerEvent]) -> usize {
                 })
         })
         .count()
+}
+
+fn task_requires_workspace_write_proposal(record: &TaskRecord) -> bool {
+    record.execution_constraints.as_ref().map_or_else(
+        || task_goal_requires_workspace_write_proposal(&record.goal),
+        |constraints| constraints.requires_workspace_write_proposal,
+    )
 }
 
 fn task_goal_requires_workspace_write_proposal(goal: &str) -> bool {
@@ -3537,7 +3472,7 @@ mod workspace_edit_completion_gate_tests {
         };
 
         assert!(is_recoverable_workspace_read_denial_for_followup(&event));
-        assert!(is_duplicate_workspace_read_denial(&event));
+        assert!(!is_valid_workspace_patch_proposal_event(&event));
     }
 
     #[test]
@@ -3556,7 +3491,7 @@ mod workspace_edit_completion_gate_tests {
         };
 
         assert!(is_recoverable_workspace_read_denial_for_followup(&denied));
-        assert!(is_duplicate_workspace_read_denial(&denied));
+        assert!(!is_valid_workspace_patch_proposal_event(&denied));
         assert!(should_run_second_pass_for_events(
             &[denied],
             "Patch only scripts/release-local-artifact.mjs."
@@ -3564,7 +3499,7 @@ mod workspace_edit_completion_gate_tests {
     }
 
     #[test]
-    fn rejected_todo_decomposition_write_is_recoverable_and_not_valid_edit_evidence() {
+    fn rejected_constraint_write_is_recoverable_and_not_valid_edit_evidence() {
         let rejected = brownie_store::LedgerEvent {
             event_id: "event_todo_write_rejected".to_string(),
             task_id: "task_todo_write_rejected".to_string(),
@@ -3573,8 +3508,8 @@ mod workspace_edit_completion_gate_tests {
             timestamp: "2026-10-12T00:00:00Z".to_string(),
             payload: Some(json!({
                 "tool_id": WORKSPACE_WRITE_TOOL_ID,
-                "code": "todo_md_write_denied_for_implementation_todo",
-                "reason": "Every TODO decomposition leaf `Source TODO:` must reference the selected parent TODO."
+                "code": "task_execution_constraint_denied",
+                "reason": "task_execution_constraint_denied: workspace write exceeds admitted restrictions"
             })),
             payload_envelope: None,
         };
@@ -3595,7 +3530,7 @@ mod workspace_edit_completion_gate_tests {
     }
 
     #[test]
-    fn rejected_todo_decomposition_write_admits_second_pass_repair() {
+    fn rejected_constraint_write_admits_second_pass_repair() {
         let rejected = brownie_store::LedgerEvent {
             event_id: "event_todo_write_rejected".to_string(),
             task_id: "task_todo_write_rejected".to_string(),
@@ -3604,7 +3539,7 @@ mod workspace_edit_completion_gate_tests {
             timestamp: "2026-10-12T00:00:00Z".to_string(),
             payload: Some(json!({
                 "tool_id": WORKSPACE_WRITE_TOOL_ID,
-                "code": "todo_md_write_denied_for_implementation_todo"
+                "code": "task_execution_constraint_denied"
             })),
             payload_envelope: None,
         };
@@ -3612,7 +3547,7 @@ mod workspace_edit_completion_gate_tests {
         assert_ne!(rejected.kind, LedgerEventKind::ToolExecutionCompleted);
         assert!(should_run_second_pass_for_events(
             &[rejected],
-            "Decompose the selected TODO into concrete child items."
+            "Satisfy the admitted execution policy."
         ));
     }
 
@@ -4140,6 +4075,16 @@ fn validate_verification_recovery_context_read(
         )
     })?;
     validate_selected_index_context_permission(policy, RuntimeAction::ReadWorkspace)?;
+    if controlled_tool_execution::workspace_read_constraint_rejection_reason(
+        store, record, &safe_path,
+    )
+    .map_err(|error| TaskRunAdmissionRejection::Internal(error.to_string()))?
+    .is_some()
+    {
+        return invalid_verification_recovery_context_read(
+            "workspace read exceeds admitted task constraints",
+        );
+    }
     let excerpt = read_verification_recovery_context_excerpt(
         store.workspace_root(),
         &safe_path,
@@ -11737,10 +11682,23 @@ fn inspect_proposal(
     run_id: &str,
     proposal_id: &str,
 ) -> Result<WorkspacePatchProposalSummary, String> {
-    list_proposals(store, run_id)?
+    let proposal = list_proposals(store, run_id)?
         .into_iter()
         .find(|proposal| proposal.proposal_id == proposal_id)
-        .ok_or_else(|| "invalid params: proposal not found".to_string())
+        .ok_or_else(|| "invalid params: proposal not found".to_string())?;
+    let task = store
+        .tasks()
+        .get_task_by_run_id(run_id)
+        .map_err(|error| format!("invalid params: {error}"))?
+        .ok_or_else(|| "invalid params: proposal task not found".to_string())?;
+    if task
+        .execution_constraints
+        .as_ref()
+        .is_some_and(|constraints| !constraints.allows_write(&proposal.path, &proposal.operation))
+    {
+        return Err("invalid params: proposal exceeds admitted task execution constraints".into());
+    }
+    Ok(proposal)
 }
 
 fn inspect_run(store: &BrownieStore, run_id: &str) -> Result<RunInspectSummary, String> {
@@ -13134,6 +13092,18 @@ fn sanitize_ledger_payload_with_options(
     let Value::Object(map) = payload? else {
         return None;
     };
+    // Only this closed, store-validated outcome is public. Do not expose arbitrary
+    // nested metadata from historical or imported ledgers.
+    let bounded_progress = json!({
+        "status": "replan_required",
+        "reason_code": "workspace_read_not_admitted",
+        "next_action": "revise_inputs_or_objective",
+        "workspace_mutation_proposed": false,
+    });
+    let expose_progress = map.get("tool_id").and_then(Value::as_str)
+        == Some(WORKSPACE_READ_TOOL_ID)
+        && map.get("allowed").and_then(Value::as_bool) == Some(false)
+        && map.get("progress_outcome") == Some(&bounded_progress);
     const ALLOWED_KEYS: &[&str] = &[
         "tool_id",
         "status",
@@ -13378,6 +13348,9 @@ fn sanitize_ledger_payload_with_options(
                 || (include_patch_material && key.as_str() == "patch_hunks")
         })
         .collect::<serde_json::Map<_, _>>();
+    if expose_progress {
+        sanitized.insert("progress_outcome".to_string(), bounded_progress);
+    }
     if sanitized.get("tool_id").and_then(Value::as_str) == Some(WORKSPACE_READ_TOOL_ID)
         && sanitized.contains_key("output_preview")
     {
@@ -14184,27 +14157,28 @@ fn append_workspace_patch_proposal(
         return Ok(());
     }
     if operation == WorkspacePatchOperation::PatchFile.as_str() {
-        proposal_input = disambiguate_workspace_patch_input_from_goal(
-            store,
-            path,
-            &proposal_input,
-            &record.goal,
-        );
+        if record.execution_constraints.is_none() {
+            proposal_input = disambiguate_workspace_patch_input_from_goal(
+                store,
+                path,
+                &proposal_input,
+                &record.goal,
+            );
+        }
         proposal_input =
             normalize_json_line_block_patch_input_from_target(store, path, &proposal_input);
     }
-    proposal_input =
-        controlled_tool_execution::normalize_todo_md_workspace_write_input(record, &proposal_input);
-    if let Some(reason) =
-        controlled_tool_execution::todo_md_workspace_write_rejection_reason(record, &proposal_input)
-    {
+    if let Some(reason) = controlled_tool_execution::workspace_write_constraint_rejection_reason(
+        record,
+        &proposal_input,
+    ) {
         store.tasks().append_task_event_with_payload(
             record,
             LedgerEventKind::ToolIntentRejected,
             Some(json!({
                 "tool_id": WORKSPACE_WRITE_TOOL_ID,
                 "reason": reason,
-                "code": "todo_md_write_denied_for_implementation_todo"
+                "code": "task_execution_constraint_denied"
             })),
         )?;
         return Ok(());
@@ -14485,53 +14459,6 @@ fn disambiguate_workspace_patch_input_from_goal(
     input: &Value,
     goal: &str,
 ) -> Value {
-    let goal_lower = goal.to_lowercase();
-    if (path == ".brownie/todo.md" || path == "todo.md")
-        && goal_lower.contains("duplicate unchecked todo id")
-        && goal_lower.contains("todo")
-        && input.get("hunks").is_none()
-        && input.get("content").is_none()
-        && input.get("operation").and_then(Value::as_str)
-            == Some(WorkspacePatchOperation::PatchFile.as_str())
-    {
-        if let Ok(hunks) = patch_hunks_from_input(input) {
-            if hunks.len() == 1 && hunks[0].occurrence.is_none() {
-                let hunk = &hunks[0];
-                if !hunk.old_text.is_empty() && hunk.old_text != hunk.new_text {
-                    if let Ok(root) = store.workspace_root().canonicalize() {
-                        if brownie_tools::preflight_workspace_write_path(path).is_ok() {
-                            let target = root.join(path);
-                            if let Ok(canonical_target) = target.canonicalize() {
-                                if canonical_target.starts_with(&root) {
-                                    if let Ok(existing) = std::fs::read_to_string(&canonical_target)
-                                    {
-                                        if count_text_matches(&existing, &hunk.old_text) > 1 {
-                                            let mut normalized =
-                                                input.as_object().cloned().unwrap_or_default();
-                                            normalized.remove("old_text");
-                                            normalized.remove("new_text");
-                                            normalized.remove("content");
-                                            normalized.insert(
-                                                "hunks".to_string(),
-                                                json!([
-                                                    {
-                                                        "old_text": hunk.old_text,
-                                                        "new_text": hunk.new_text,
-                                                        "occurrence": 2
-                                                    }
-                                                ]),
-                                            );
-                                            return Value::Object(normalized);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
     let Some(object_id) = selected_goal_json_object_id(goal) else {
         return input.clone();
     };
@@ -16390,6 +16317,7 @@ mod tests {
         let task = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "expired runtime deadline".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -16460,6 +16388,7 @@ mod tests {
         let task = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "deadline mismatch".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -16880,6 +16809,154 @@ mod tests {
             error.contains("external responsibility items must not be blocking"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn verification_recovery_context_read_enforces_inherited_constraints() {
+        let _guard = lock_env();
+        for constraints in [
+            json!({"read_paths": [], "max_workspace_reads": 0}),
+            json!({"read_paths": ["other.rs"]}),
+            json!({"denied_read_paths": ["src/lib.rs"]}),
+            json!({"read_paths": ["src/lib.rs"], "max_workspace_reads": 0}),
+        ] {
+            let temp = tempfile::tempdir().expect("tempdir");
+            write_cargo_check_fixture(
+                temp.path(),
+                "constrained_recovery_context",
+                "pub fn private_context_marker() -> MissingType { 1 }\n",
+            );
+            std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+            std::env::remove_var("BROWNIE_LLM_PROVIDER");
+            std::env::remove_var("BROWNIE_LLM_STRICT");
+            let (source_task_id, source_run_id, fingerprint) =
+                failed_verification_source_from_start_and_run(
+                    &json!({"jsonrpc":"2.0", "id":1, "method":"task.start", "params":{
+                        "goal":"Verify compilation with cargo check", "mode_id":"verifier",
+                        "execution_constraints":constraints
+                    }})
+                    .to_string(),
+                );
+            let (task_id, run_id) = start_verification_recovery_task_from_source(
+                &source_task_id,
+                &source_run_id,
+                &fingerprint,
+                "Recover the compiler diagnostic",
+                "implementer",
+            );
+            let response = parse_line(&json!({"jsonrpc":"2.0", "id":4, "method":"task.run", "params":{
+                "task_id":task_id,
+                "verification_recovery_context_read":{
+                    "authorize":true, "source_task_id":source_task_id, "source_run_id":source_run_id,
+                    "expected_failure_fingerprint":fingerprint, "diagnostic_index":0, "max_excerpt_bytes":128
+                }
+            }}).to_string());
+            std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+            assert!(
+                response.error.is_some(),
+                "inherited constraints must deny context read: {constraints}"
+            );
+            let events = store_events(temp.path(), &run_id);
+            assert!(!events.iter().any(|event| matches!(
+                event.kind,
+                LedgerEventKind::TaskRunning
+                    | LedgerEventKind::VerificationRecoveryContextReadMaterialized
+                    | LedgerEventKind::LlmRequestCreated
+            )));
+        }
+    }
+
+    #[test]
+    fn verification_recovery_context_read_consumes_shared_budget_once() {
+        let _guard = lock_env();
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_cargo_check_fixture(
+            temp.path(),
+            "recovery_shared_budget",
+            "pub fn diagnostic_context() -> MissingType { 1 }\n",
+        );
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::remove_var("BROWNIE_LLM_PROVIDER");
+        std::env::remove_var("BROWNIE_LLM_STRICT");
+        let (source_task_id, source_run_id, fingerprint) =
+            failed_verification_source_from_start_and_run(
+                &json!({"jsonrpc":"2.0", "id":1, "method":"task.start", "params":{
+                    "goal":"Verify compilation with cargo check", "mode_id":"verifier",
+                    "execution_constraints":{"read_paths":["src/lib.rs"], "max_workspace_reads":1}
+                }})
+                .to_string(),
+            );
+        let (task_id, run_id) = start_verification_recovery_task_from_source(
+            &source_task_id,
+            &source_run_id,
+            &fingerprint,
+            "Recover the compiler diagnostic",
+            "implementer",
+        );
+        let target = json!({"authorize":true, "source_task_id":source_task_id, "source_run_id":source_run_id,
+            "expected_failure_fingerprint":fingerprint, "diagnostic_index":0, "max_excerpt_bytes":128});
+        let request = json!({"jsonrpc":"2.0", "id":4, "method":"task.run", "params":{
+            "task_id":task_id, "verification_recovery_context_read":target
+        }})
+        .to_string();
+        let response = parse_line(&request);
+        assert!(response.error.is_none(), "{response:?}");
+        let store = BrownieStore::new(temp.path());
+        let record = store.tasks().get_task(&task_id).unwrap().unwrap();
+        let policy = resolve_policy_for_task_run(&record, &store).unwrap();
+        assert_eq!(
+            store_events(temp.path(), &run_id)
+                .iter()
+                .filter(|event| event.kind
+                    == LedgerEventKind::VerificationRecoveryContextReadMaterialized)
+                .count(),
+            1
+        );
+        // Replay returns the retained summary; it must not read or debit again.
+        let replay = parse_line(&request);
+        assert!(replay.error.is_none(), "{replay:?}");
+        assert_eq!(
+            store_events(temp.path(), &run_id)
+                .iter()
+                .filter(|event| event.kind
+                    == LedgerEventKind::VerificationRecoveryContextReadMaterialized)
+                .count(),
+            1
+        );
+        // The ordinary tool path and another context materialization both see
+        // the same durable debit, including after reopening the store.
+        let assistant = format!(
+            "```brownie-tool-intent\n{}\n```",
+            json!({"tool_requests":[{
+                "tool_id":"workspace.read", "reason":"read diagnostic again", "input":{"path":"src/lib.rs"}
+            }]})
+        );
+        controlled_tool_execution::append_tool_intent_events(&store, &record, &policy, &assistant)
+            .unwrap();
+        controlled_tool_execution::handle_approved_workspace_intents(
+            &store, &record, &policy, &assistant,
+        )
+        .unwrap();
+        assert!(!store_events(temp.path(), &run_id)
+            .iter()
+            .any(
+                |event| event.kind == LedgerEventKind::ToolExecutionCompleted
+                    && event
+                        .payload
+                        .as_ref()
+                        .and_then(|v| v.get("tool_id"))
+                        .and_then(Value::as_str)
+                        == Some("workspace.read")
+            ));
+        let reopened = BrownieStore::new(temp.path());
+        assert!(validate_verification_recovery_context_read(
+            &reopened,
+            &record,
+            &policy,
+            &serde_json::from_value(target).unwrap()
+        )
+        .is_err());
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 
     #[test]
@@ -19909,6 +19986,7 @@ modes:
         let task = store
             .tasks()
             .start_task(brownie_protocol::TaskStartParams {
+                execution_constraints: None,
                 goal: "Inspect git status".into(),
                 mode_id: Some("verifier".into()),
                 verification_recovery_source: None,
@@ -20036,6 +20114,7 @@ modes:
         let task = store
             .tasks()
             .start_task(brownie_protocol::TaskStartParams {
+                execution_constraints: None,
                 goal: "Commit staged change".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
@@ -21445,6 +21524,7 @@ modes:
         let created = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "created source".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
@@ -21457,6 +21537,7 @@ modes:
         let running = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "running source".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
@@ -21477,6 +21558,7 @@ modes:
         let completed = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "completed source".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
@@ -21497,6 +21579,7 @@ modes:
         let cancelled = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "cancelled source".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
@@ -21517,6 +21600,7 @@ modes:
         let non_verification_failed = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "non-verification failed source".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
@@ -23180,6 +23264,7 @@ modes:
         let task = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Created progress with stale agent loop evidence".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -23215,6 +23300,7 @@ modes:
         let parent = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Parent for queued progress".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -23249,6 +23335,7 @@ modes:
         let parent = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Parent for stale queued progress".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -23285,6 +23372,7 @@ modes:
         let task = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Running progress".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -23324,6 +23412,7 @@ modes:
         let task = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Non-terminal gate-shaped payload is ignored".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -23376,6 +23465,7 @@ modes:
         let task = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Malformed terminal gate status".to_string(),
                 mode_id: Some("verifier".to_string()),
                 verification_recovery_source: None,
@@ -23459,6 +23549,7 @@ modes:
         let task = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Non-verification failure progress".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -23500,6 +23591,7 @@ modes:
         let task = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Completed progress".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -23542,6 +23634,7 @@ modes:
         let task = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Cancelled progress".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -23583,6 +23676,7 @@ modes:
         let task = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Recovered verification progress".to_string(),
                 mode_id: Some("verifier".to_string()),
                 verification_recovery_source: None,
@@ -23639,6 +23733,7 @@ modes:
         let task = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Recovery repair gate is not verification".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -23690,6 +23785,7 @@ modes:
         let parent = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Failed parent with queued child".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -23731,6 +23827,7 @@ modes:
         let parent = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Cancelled parent with running child".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -23780,6 +23877,7 @@ modes:
         let parent = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Completed parent with queued child".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -23825,6 +23923,7 @@ modes:
         let parent = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Completed parent with running child".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -23879,6 +23978,7 @@ modes:
         let parent = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Completed parent with terminal child".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -23947,6 +24047,7 @@ modes:
         let parent_join = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Parent ready for join".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -23989,6 +24090,7 @@ modes:
         let parent_pending = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Parent with pending child".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -24010,6 +24112,7 @@ modes:
         let running_task = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Running task".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -24104,6 +24207,7 @@ modes:
             store
                 .tasks()
                 .start_task(TaskStartParams {
+                    execution_constraints: None,
                     goal: format!("Bounded transport task {index} {}", "x".repeat(64)),
                     mode_id: Some("orchestrator".to_string()),
                     verification_recovery_source: None,
@@ -24170,6 +24274,7 @@ modes:
         let first = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Headless first".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -24182,6 +24287,7 @@ modes:
         let second = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Headless second".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -24290,6 +24396,7 @@ modes:
         let first = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Budget first".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -24302,6 +24409,7 @@ modes:
         let second = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Budget second".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -24314,6 +24422,7 @@ modes:
         let third = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Budget third".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -24411,6 +24520,7 @@ modes:
         let first = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Budget replay first".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -24423,6 +24533,7 @@ modes:
         let second = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Budget replay second".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -24523,6 +24634,7 @@ modes:
         let task = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Budget validation".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -24584,6 +24696,7 @@ modes:
         let task = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Budget stale".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -24630,6 +24743,7 @@ modes:
         let first = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Run session first".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -24642,6 +24756,7 @@ modes:
         let second = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Run session second".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -24654,6 +24769,7 @@ modes:
         let third = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Run session third".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -24828,6 +24944,7 @@ modes:
         let task = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Run session stale".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -24892,6 +25009,7 @@ modes:
             store
                 .tasks()
                 .start_task(TaskStartParams {
+                    execution_constraints: None,
                     goal: goal.to_string(),
                     mode_id: Some("orchestrator".to_string()),
                     verification_recovery_source: None,
@@ -25058,6 +25176,7 @@ modes:
         let older = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Older CLI objective".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -25070,6 +25189,7 @@ modes:
         let unrelated = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Unrelated runtime task".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -25082,6 +25202,7 @@ modes:
         let latest = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Latest CLI objective".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -25173,6 +25294,7 @@ modes:
         let older = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Older CLI objective".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -25185,6 +25307,7 @@ modes:
         let unrelated = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Unrelated runtime task".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -25197,6 +25320,7 @@ modes:
         let latest = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Latest CLI objective".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -25330,6 +25454,7 @@ modes:
         let older = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Older CLI objective".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -25342,6 +25467,7 @@ modes:
         let latest = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Completed latest CLI objective".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -25401,6 +25527,7 @@ modes:
         let source = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "CLI objective with verifier recovery".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -25413,6 +25540,7 @@ modes:
         let unrelated = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Unrelated runtime task".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -25483,6 +25611,7 @@ modes:
         let source = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "CLI objective with verifier retry".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -25597,6 +25726,7 @@ modes:
         let source = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "CLI objective with malformed recovery".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -25615,6 +25745,19 @@ modes:
                 LedgerEventKind::TaskFailed,
             )
             .expect("fail source");
+        let unrelated = store
+            .tasks()
+            .start_task(TaskStartParams {
+                execution_constraints: None,
+                goal: "Independent unrelated source".into(),
+                mode_id: Some("orchestrator".into()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("unrelated source");
         let conflicting = store
             .tasks()
             .start_verification_recovery_task(VerificationRecoveryTaskStartParams {
@@ -25622,7 +25765,7 @@ modes:
                 mode_id: Some("implementer".to_string()),
                 provenance: VerificationRecoveryProvenance {
                     source_task_id: source.task_id.clone(),
-                    source_run_id: "run_unrelated".to_string(),
+                    source_run_id: unrelated.run_id.clone(),
                     failure_fingerprint: format!("sha256:{}", "f".repeat(64)),
                     required_verifier_count: 1,
                     passed_verifier_count: 0,
@@ -25674,6 +25817,7 @@ modes:
         let older = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Older CLI objective".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -25686,6 +25830,7 @@ modes:
         let latest = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Latest CLI objective".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -25775,6 +25920,7 @@ modes:
         let active = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "active CLI objective".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -25787,6 +25933,7 @@ modes:
         let unrelated = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "unrelated completed objective".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -25873,6 +26020,7 @@ modes:
         let active = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "active CLI objective".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -25885,6 +26033,7 @@ modes:
         let unrelated = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "unrelated newer objective".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -26021,6 +26170,7 @@ modes:
         let active = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "active CLI objective".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -26033,6 +26183,7 @@ modes:
         let unrelated = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "unrelated completed objective".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -26216,6 +26367,7 @@ modes:
         let task = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Finalize complete drive".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -26490,6 +26642,7 @@ modes:
         let owner = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "owner".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -26578,6 +26731,7 @@ modes:
         let other = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "new root after closure".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -26640,6 +26794,7 @@ modes:
         let task = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "owner".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -26883,6 +27038,7 @@ modes:
         let old_task = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "old completed task".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -26917,6 +27073,7 @@ modes:
         let mut latest_task = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "latest completed task missing completion evidence".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -26987,6 +27144,7 @@ modes:
         let valid_task = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "valid completed task".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -27048,6 +27206,7 @@ modes:
         let mut legacy_scratch = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "unreadable legacy scratch task".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -27160,6 +27319,7 @@ modes:
         let task = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Drive missing checkpoint".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -29925,6 +30085,7 @@ modes:
         let task = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Runtime-derived route resume".to_string(),
                 mode_id: Some("implementer".to_string()),
                 verification_recovery_source: None,
@@ -31353,6 +31514,7 @@ modes:
         let task = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Budget failed verifier route".to_string(),
                 mode_id: Some("verifier".to_string()),
                 verification_recovery_source: None,
@@ -31481,6 +31643,7 @@ modes:
         let parent = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Budget parent ready for explicit join".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -31569,6 +31732,7 @@ modes:
         let parent = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Parent with queued child".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -31620,6 +31784,7 @@ modes:
         let task = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Missing auth".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -31673,6 +31838,7 @@ modes:
         let task = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Stale fingerprint".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -31713,6 +31879,7 @@ modes:
         let task = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Already running".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -31766,6 +31933,7 @@ modes:
         let parent = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Parent join ready".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -31842,6 +32010,7 @@ modes:
         let task = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Replay terminal continuation".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -31921,6 +32090,7 @@ modes:
         let task = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Replay running continuation".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -32000,6 +32170,7 @@ modes:
         let first = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Conflict first".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -32012,6 +32183,7 @@ modes:
         let second = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Conflict second".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -32068,6 +32240,7 @@ modes:
         let task = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Failed verifier route".to_string(),
                 mode_id: Some("verifier".to_string()),
                 verification_recovery_source: None,
@@ -32183,6 +32356,7 @@ modes:
         let source = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Source verification failure".to_string(),
                 mode_id: Some("verifier".to_string()),
                 verification_recovery_source: None,
@@ -32294,6 +32468,7 @@ modes:
         let source = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Source verification failure".to_string(),
                 mode_id: Some("verifier".to_string()),
                 verification_recovery_source: None,
@@ -32306,6 +32481,7 @@ modes:
         let recovery = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Recovery task".to_string(),
                 mode_id: Some("implementer".to_string()),
                 verification_recovery_source: None,
@@ -33172,6 +33348,7 @@ modes:
         let parent = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Parent ready for explicit join".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -33263,6 +33440,7 @@ modes:
         let parent = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Bounded task listing parent".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -33459,6 +33637,7 @@ modes:
         let task = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Stable progress fingerprint".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -33805,6 +33984,7 @@ modes:
         let task = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Selected index progress".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
@@ -34204,6 +34384,115 @@ modes:
         assert!(response.error.is_none());
         assert_eq!(response.result.expect("result")["status"], "Denied");
         assert!(!temp.path().join("created.txt").exists());
+    }
+
+    #[test]
+    fn execution_constraints_headless_admission_replays_and_rejects_changed_scope() {
+        let _guard = lock_env();
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        let constraints = json!({"read_paths": [], "write_paths": [], "max_workspace_reads": 0,
+            "requires_workspace_write_proposal": false});
+        let mut request = json!({"jsonrpc": "2.0", "id": 1, "method": "headless.run.drive", "params": {
+            "authorize": true, "session_id": "constraint.session", "drive_id": "constraint.drive",
+            "expected_start_session_sequence": 0, "max_advances": 1, "max_steps_per_advance": 1,
+            "journey_admission": {"journey_id": "constraint.journey", "authorize_journey_start": true,
+                "admission_id": "constraint.admission", "task_start": {"goal": "Answer briefly", "mode_id": "implementer",
+                    "execution_constraints": constraints}}
+        }});
+        let first = parse_line(&request.to_string());
+        assert!(first.error.is_none(), "{:?}", first.error);
+        let store = BrownieStore::new(temp.path());
+        let tasks = store.tasks().list_tasks().unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(
+            serde_json::to_value(tasks[0].execution_constraints.as_ref().unwrap()).unwrap(),
+            constraints
+        );
+        let replay = parse_line(&request.to_string());
+        assert!(replay.error.is_none(), "{:?}", replay.error);
+        assert_eq!(store.tasks().list_tasks().unwrap().len(), 1);
+        request["params"]["journey_admission"]["task_start"]["execution_constraints"]
+            ["write_paths"] = json!(["outside.txt"]);
+        assert!(parse_line(&request.to_string()).error.is_some());
+        assert_eq!(store.tasks().list_tasks().unwrap(), tasks);
+    }
+
+    #[test]
+    fn execution_constraints_jsonrpc_preserves_admission_and_rejects_out_of_scope_apply() {
+        let _guard = lock_env();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::fs::write(temp.path().join("README.md"), "unchanged").unwrap();
+        let constraints = json!({"write_paths": ["notes.txt"], "max_workspace_reads": 1,
+            "requires_workspace_write_proposal": true});
+        let start = parse_line(&json!({"jsonrpc": "2.0", "id": 1, "method": "task.start", "params": {
+            "goal": "Produce the requested result", "mode_id": "implementer", "execution_constraints": constraints
+        }}).to_string());
+        assert!(start.error.is_none(), "{:?}", start.error);
+        let result = start.result.unwrap();
+        let store = BrownieStore::new(temp.path());
+        let record = store
+            .tasks()
+            .get_task(result["task_id"].as_str().unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(record.execution_constraints.as_ref().unwrap()).unwrap(),
+            constraints
+        );
+        assert!(task_requires_workspace_write_proposal(&record));
+        let direct = parse_line(
+            &json!({"jsonrpc": "2.0", "id": 2, "method": "tool.execute", "params": {
+                "tool_id": "workspace.read", "mode_id": "implementer", "task_id": record.task_id,
+                "input": {"path": "notes.txt"}
+            }})
+            .to_string(),
+        );
+        assert_eq!(direct.result.unwrap()["status"], "Denied");
+        append_test_patch_proposal(
+            &store,
+            &record,
+            "outside_proposal",
+            "Valid",
+            Some("--- a/README.md\n+++ b/README.md"),
+            false,
+        );
+        let before = store.tasks().read_ledger_events(&record.run_id).unwrap();
+        assert!(
+            preflight_proposal(&store, &record.run_id, "outside_proposal")
+                .unwrap_err()
+                .contains("execution constraints")
+        );
+        let params: ProposalApplyParams = serde_json::from_value(json!({"run_id": record.run_id,
+            "proposal_id": "outside_proposal", "authorize": true, "replacement_content": "changed"})).unwrap();
+        assert!(proposal_apply::apply_proposal(&store, &params)
+            .unwrap_err()
+            .contains("execution constraints"));
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "unchanged"
+        );
+        assert_eq!(
+            store.tasks().read_ledger_events(&record.run_id).unwrap(),
+            before
+        );
+    }
+
+    #[test]
+    fn execution_constraints_jsonrpc_rejects_invalid_scope_before_task_creation() {
+        let _guard = lock_env();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        let response = parse_line(
+            &json!({"jsonrpc": "2.0", "id": 1, "method": "task.start", "params": {
+                "goal": "Produce result", "execution_constraints": {"write_paths": ["../outside"]}
+            }})
+            .to_string(),
+        );
+        assert_eq!(response.error.unwrap().code, -32602);
+        assert!(!temp.path().join(".brownie/runs").exists());
     }
 
     #[test]
@@ -36444,6 +36733,7 @@ modes:
         let parent = store
             .tasks()
             .start_task(brownie_protocol::TaskStartParams {
+                execution_constraints: None,
                 goal: "Parent orchestration".into(),
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
@@ -36560,6 +36850,7 @@ modes:
         let parent = store
             .tasks()
             .start_task(brownie_protocol::TaskStartParams {
+                execution_constraints: None,
                 goal: "Parent orchestration".into(),
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
@@ -36871,6 +37162,7 @@ modes:
         let parent = store
             .tasks()
             .start_task(brownie_protocol::TaskStartParams {
+                execution_constraints: None,
                 goal: "Parent orchestration".into(),
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
@@ -36934,6 +37226,7 @@ modes:
         let parent = store
             .tasks()
             .start_task(brownie_protocol::TaskStartParams {
+                execution_constraints: None,
                 goal: "Parent orchestration".into(),
                 mode_id: Some("external-orchestrator".into()),
                 verification_recovery_source: None,
@@ -36990,6 +37283,7 @@ modes:
         let task = store
             .tasks()
             .start_task(brownie_protocol::TaskStartParams {
+                execution_constraints: None,
                 goal: "Update scoped docs".into(),
                 mode_id: Some("external-integrator".into()),
                 verification_recovery_source: None,
@@ -37060,6 +37354,7 @@ modes:
         let parent = store
             .tasks()
             .start_task(brownie_protocol::TaskStartParams {
+                execution_constraints: None,
                 goal: "Parent orchestration".into(),
                 mode_id: Some("external-orchestrator".into()),
                 verification_recovery_source: None,
@@ -37121,6 +37416,7 @@ modes:
         let parent = store
             .tasks()
             .start_task(brownie_protocol::TaskStartParams {
+                execution_constraints: None,
                 goal: "Parent orchestration".into(),
                 mode_id: Some("external-orchestrator".into()),
                 verification_recovery_source: None,
@@ -37150,6 +37446,7 @@ modes:
         let reviewer = store
             .tasks()
             .start_task(brownie_protocol::TaskStartParams {
+                execution_constraints: None,
                 goal: "Reviewer should not dispatch".into(),
                 mode_id: Some("reviewer-lite".into()),
                 verification_recovery_source: None,
@@ -37770,6 +38067,7 @@ modes:
         let parent = store
             .tasks()
             .start_task(brownie_protocol::TaskStartParams {
+                execution_constraints: None,
                 goal: "Real AgentModes Core parent proposal".into(),
                 mode_id: Some("core.orchestrator".into()),
                 verification_recovery_source: None,
@@ -37827,6 +38125,7 @@ modes:
         let parent = store
             .tasks()
             .start_task(brownie_protocol::TaskStartParams {
+                execution_constraints: None,
                 goal: "Parent orchestration".into(),
                 mode_id: Some("external-orchestrator".into()),
                 verification_recovery_source: None,
@@ -37925,6 +38224,7 @@ modes:
         let parent = store
             .tasks()
             .start_task(brownie_protocol::TaskStartParams {
+                execution_constraints: None,
                 goal: "Parent orchestration".into(),
                 mode_id: Some("external-orchestrator".into()),
                 verification_recovery_source: None,
@@ -38052,6 +38352,7 @@ modes:
         let parent = store
             .tasks()
             .start_task(brownie_protocol::TaskStartParams {
+                execution_constraints: None,
                 goal: "Parent orchestration".into(),
                 mode_id: Some("external-orchestrator".into()),
                 verification_recovery_source: None,
@@ -38144,6 +38445,7 @@ modes:
         let parent = store
             .tasks()
             .start_task(brownie_protocol::TaskStartParams {
+                execution_constraints: None,
                 goal: "Parent orchestration".into(),
                 mode_id: Some("external-orchestrator".into()),
                 verification_recovery_source: None,
@@ -38207,6 +38509,7 @@ modes:
         let parent = store
             .tasks()
             .start_task(brownie_protocol::TaskStartParams {
+                execution_constraints: None,
                 goal: "Parent orchestration".into(),
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
@@ -38946,6 +39249,7 @@ modes:
         let parent = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "Parent recovery-cycle admission".into(),
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
@@ -41627,6 +41931,7 @@ modes:
         let parent = store
             .tasks()
             .start_task(brownie_protocol::TaskStartParams {
+                execution_constraints: None,
                 goal: "Parent orchestration".into(),
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
@@ -41703,6 +42008,7 @@ modes:
         let parent = store
             .tasks()
             .start_task(brownie_protocol::TaskStartParams {
+                execution_constraints: None,
                 goal: "Parent over-budget recovery cycle".into(),
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
@@ -41820,6 +42126,7 @@ modes:
         let parent = store
             .tasks()
             .start_task(brownie_protocol::TaskStartParams {
+                execution_constraints: None,
                 goal: "Parent over-budget recovery-cycle outcome".into(),
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
@@ -42995,92 +43302,105 @@ modes:
     #[test]
     fn task_run_parent_join_concurrent_admission_consumes_once() {
         let _guard = lock_env();
-        let temp = tempfile::tempdir().expect("tempdir");
-        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        for delay_micros in [0, 100, 500, 1_000, 5_000, 10_000, 25_000, 50_000, 100_000] {
+            let temp = tempfile::tempdir().expect("tempdir");
+            std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
 
-        let (parent_task_id, parent_run_id, child, _parent_event_count) =
-            start_parent_with_queued_child();
+            let (parent_task_id, parent_run_id, child, _parent_event_count) =
+                start_parent_with_queued_child();
 
-        let child_run = parse_line(&format!(
-            r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
-            child.task_id
-        ));
-        assert!(child_run.error.is_none());
+            let child_run = parse_line(&format!(
+                r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+                child.task_id
+            ));
+            assert!(child_run.error.is_none());
 
-        let request_a = format!(
-            r#"{{"jsonrpc":"2.0","id":4,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
-        );
-        let request_b = format!(
-            r#"{{"jsonrpc":"2.0","id":5,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
-        );
-        let handle_a = std::thread::spawn(move || parse_line(&request_a));
-        let handle_b = std::thread::spawn(move || parse_line(&request_b));
-        let responses = [
-            handle_a.join().expect("join parent run a"),
-            handle_b.join().expect("join parent run b"),
-        ];
-        let result_count = responses
-            .iter()
-            .filter(|response| response.result.is_some())
-            .count();
-        let error_count = responses
-            .iter()
-            .filter(|response| response.error.is_some())
-            .count();
-        assert!(result_count >= 1);
-        assert!(error_count <= 1);
-        assert_eq!(result_count + error_count, responses.len());
-        for result in responses
-            .iter()
-            .filter_map(|response| response.result.as_ref())
-        {
-            assert_eq!(result["status"], "Completed");
-        }
-        for error in responses
-            .iter()
-            .filter_map(|response| response.error.as_ref())
-        {
-            assert_eq!(error.code, -32602);
-        }
-
-        let store = BrownieStore::new(temp.path());
-        let parent_events = store
-            .tasks()
-            .read_ledger_events(&parent_run_id)
-            .expect("parent events");
-        assert!(
-            parent_events
-                .iter()
-                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
-                .count()
-                >= 2
-        );
-        assert_eq!(
-            parent_events
-                .iter()
-                .filter(|event| {
-                    event.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+            let handles = (0..8)
+                .map(|index| {
+                    let task_id = parent_task_id.clone();
+                    let barrier = barrier.clone();
+                    std::thread::spawn(move || {
+                        barrier.wait();
+                        if index != 0 {
+                            std::thread::sleep(std::time::Duration::from_micros(delay_micros));
+                        }
+                        parse_line(
+                            &json!({"jsonrpc":"2.0", "id":index + 4, "method":"task.run",
+                        "params":{"task_id":task_id}})
+                            .to_string(),
+                        )
+                    })
                 })
-                .count(),
-            1
-        );
-        assert_eq!(
-            parent_events
+                .collect::<Vec<_>>();
+            let responses = handles
+                .into_iter()
+                .map(|handle| handle.join().expect("join parent run"))
+                .collect::<Vec<_>>();
+            let result_count = responses
                 .iter()
-                .filter(
-                    |event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded
-                )
-                .filter_map(|event| event.payload.as_ref())
-                .filter(|payload| {
-                    payload
-                        .get("continuation_materialization")
-                        .and_then(Value::as_bool)
-                        == Some(true)
-                })
-                .count(),
-            1
-        );
-        assert_eq!(
+                .filter(|response| response.result.is_some())
+                .count();
+            let error_count = responses
+                .iter()
+                .filter(|response| response.error.is_some())
+                .count();
+            assert!(result_count >= 1);
+            assert!(error_count < responses.len());
+            assert_eq!(result_count + error_count, responses.len());
+            for result in responses
+                .iter()
+                .filter_map(|response| response.result.as_ref())
+            {
+                assert_eq!(result["status"], "Completed");
+            }
+            for error in responses
+                .iter()
+                .filter_map(|response| response.error.as_ref())
+            {
+                assert_eq!(
+                    error.code, -32602,
+                    "concurrent parent admission at {delay_micros}us: {error:?}"
+                );
+            }
+
+            let store = BrownieStore::new(temp.path());
+            let parent_events = store
+                .tasks()
+                .read_ledger_events(&parent_run_id)
+                .expect("parent events");
+            assert!(
+                parent_events
+                    .iter()
+                    .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                    .count()
+                    >= 2
+            );
+            assert_eq!(
+                parent_events
+                    .iter()
+                    .filter(|event| {
+                        event.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed
+                    })
+                    .count(),
+                1
+            );
+            assert_eq!(
+                parent_events
+                    .iter()
+                    .filter(|event| event.kind
+                        == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded)
+                    .filter_map(|event| event.payload.as_ref())
+                    .filter(|payload| {
+                        payload
+                            .get("continuation_materialization")
+                            .and_then(Value::as_bool)
+                            == Some(true)
+                    })
+                    .count(),
+                1
+            );
+            assert_eq!(
             store
                 .tasks()
                 .list_tasks()
@@ -43091,7 +43411,8 @@ modes:
             2
         );
 
-        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+            std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        }
     }
 
     #[test]
@@ -46971,7 +47292,7 @@ modes:
     }
 
     #[test]
-    fn duplicate_todo_repair_normalizes_top_level_patch_to_occurrence_hunk() {
+    fn duplicate_todo_repair_requires_explicit_occurrence_instead_of_goal_inference() {
         let _guard = lock_env();
         let temp = tempfile::tempdir().expect("tempdir");
         std::fs::create_dir_all(temp.path().join(".brownie")).expect("mkdir brownie");
@@ -46993,11 +47314,7 @@ modes:
         let normalized =
             disambiguate_workspace_patch_input_from_goal(&store, ".brownie/todo.md", &input, goal);
 
-        assert!(normalized.get("old_text").is_none());
-        assert_eq!(normalized["hunks"][0]["old_text"], duplicate_block);
-        assert_eq!(normalized["hunks"][0]["new_text"], "");
-        assert_eq!(normalized["hunks"][0]["occurrence"], 2);
-
+        assert_eq!(normalized, input);
         let proposal = build_workspace_patch_proposal_from_input(
             &store,
             ".brownie/todo.md",
@@ -47005,7 +47322,26 @@ modes:
             "",
             &normalized,
         );
-        assert_eq!(proposal.validation_status, "Valid");
+        assert_eq!(proposal.validation_status, "Invalid");
+        assert_eq!(
+            proposal.validation_reason,
+            Some("Patch old_text appears more than once in the current target.")
+        );
+        let explicit = json!({
+            "hunks": [{ "old_text": duplicate_block, "new_text": "", "occurrence": 2 }]
+        });
+        let bounded = build_workspace_patch_proposal_from_input(
+            &store,
+            ".brownie/todo.md",
+            WorkspacePatchOperation::PatchFile.as_str(),
+            "",
+            &explicit,
+        );
+        assert_eq!(bounded.validation_status, "Valid");
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join(".brownie/todo.md")).unwrap(),
+            format!("# Queue\n\n{duplicate_block}{duplicate_block}")
+        );
     }
 
     #[test]
@@ -48910,6 +49246,7 @@ modes:
         let record = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "delete obsolete file".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
@@ -49058,6 +49395,7 @@ modes:
         let record = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "delete obsolete file".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
@@ -49134,6 +49472,7 @@ modes:
         let record = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "delete obsolete file".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
@@ -49205,6 +49544,7 @@ modes:
         let record = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "delete obsolete file".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
@@ -49279,6 +49619,7 @@ modes:
         let record = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "delete obsolete symlink".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
@@ -49708,6 +50049,7 @@ modes:
         let record = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "create a bounded file".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
@@ -49858,6 +50200,7 @@ modes:
         let record = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "create bounded files".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
@@ -49974,6 +50317,7 @@ modes:
         let record = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "create bounded files".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
@@ -50252,6 +50596,7 @@ modes:
         let record = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "create a bounded file".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
@@ -50322,6 +50667,7 @@ modes:
         let record = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "create a bounded file".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
@@ -50419,6 +50765,7 @@ modes:
         let record = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "create a bounded file".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
@@ -50490,6 +50837,7 @@ modes:
         let record = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "review readiness".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
@@ -50531,6 +50879,7 @@ modes:
         let record = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "review readiness".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
@@ -50581,6 +50930,7 @@ modes:
         let record = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "apply capability".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
@@ -50625,6 +50975,7 @@ modes:
         let record = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "review readiness".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
@@ -50660,6 +51011,7 @@ modes:
         let record = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "review verdict".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
@@ -50707,6 +51059,7 @@ modes:
         let record = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "review queue".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
@@ -64453,7 +64806,7 @@ content-length: {}
     }
 
     #[test]
-    fn openai_task_run_synthesizes_concrete_e04_decomposition_after_duplicate_read_denial() {
+    fn openai_task_run_stops_without_synthesizing_project_decomposition_after_duplicate_reads() {
         let _lock = super::tests::lock_env();
         let _guard = EnvGuard::clear();
         let temp = tempfile::tempdir().unwrap();
@@ -64463,10 +64816,13 @@ content-length: {}
             "- [ ] E-04: Expand CI to include `cargo fmt --all --check`,\n  `cargo check --workspace --all-targets --all-features`,\n  `cargo clippy --workspace --all-targets --all-features -- -D warnings`,\n  `cargo test --workspace --all-features`, frozen pnpm install, root\n  check/test/build, executable release gate, Product Completion Guard, and\n  process-loss E2E.\n",
         )
         .expect("todo");
-        let (base_url, handle) = spawn_mock_many(vec![
+        let mut responses = vec![
             r#"{"choices":[{"message":{"content":"Read the TODO before editing.\n\n```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Read .brownie/todo.md before proposing the blocker refinement.\",\"input\":{\"path\":\".brownie/todo.md\"}}]}\n```"}}]}"#,
             r#"{"choices":[{"message":{"content":"Try to read the same TODO again.\n\n```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Re-read .brownie/todo.md before editing.\",\"input\":{\"path\":\".brownie/todo.md\"}}]}\n```"}}]}"#,
-        ]);
+        ];
+        responses.extend(std::iter::repeat_n(responses[1], 5));
+        let (base_url, handle) = spawn_mock_many(responses);
+        let original_todo = std::fs::read(temp.path().join(".brownie/todo.md")).unwrap();
         write_mock_config(temp.path(), &base_url);
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
         std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
@@ -64486,15 +64842,20 @@ content-length: {}
             panic!("run error: {:?}", run.error);
         }
         let run_result = run.result.expect("run result");
-        if run_result["status"] != "Completed" {
+        if run_result["status"] != "Failed" {
             panic!("unexpected run result: {run_result:#}");
         }
-        if run_result["agent_loop"]["final_state"] != "Completed" {
+        if run_result["agent_loop"]["final_state"] != "Failed" {
             panic!("unexpected run result: {run_result:#}");
         }
 
         let observed = handle.join().unwrap();
-        assert_eq!(observed.len(), 2);
+        assert_eq!(observed.len(), 7);
+        assert!(run_result.get("llm_provider_failure").is_none());
+        assert!(run_result["agent_loop"]["completion_summary"]
+            .as_str()
+            .unwrap()
+            .contains("valid workspace.write proposal"));
         let second_prompt = observed[1]["messages"]
             .as_array()
             .expect("messages")
@@ -64510,35 +64871,31 @@ content-length: {}
         .result
         .unwrap();
         let event_list = events["events"].as_array().unwrap();
-        assert!(event_list.iter().any(|event| {
-            event["kind"] == "ToolExecutionDenied"
-                && event["payload"]["tool_id"] == WORKSPACE_READ_TOOL_ID
-                && event["payload"]["reason"]
-                    .as_str()
-                    .is_some_and(|reason| reason.contains("Additional workspace.read"))
-        }));
-        let proposal = event_list
+        let denied = event_list
             .iter()
-            .find(|event| event["kind"] == "WorkspacePatchProposed")
-            .expect("workspace write proposal");
-        assert_eq!(proposal["payload"]["path"], ".brownie/todo.md");
-        assert_eq!(proposal["payload"]["operation"], "patch_file");
-        assert_eq!(proposal["payload"]["validation_status"], "Valid");
-        let request_payload = crate::tests::request_only_proposal_payload(
-            run_id,
-            proposal["payload"]["proposal_id"].as_str().unwrap(),
+            .filter(|event| {
+                event["kind"] == "ToolIntentDenied"
+                    && event["payload"]["tool_id"] == WORKSPACE_READ_TOOL_ID
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(denied.len(), 6);
+        for event in denied {
+            assert_eq!(
+                event["payload"]["progress_outcome"]["status"],
+                "replan_required"
+            );
+            assert_eq!(
+                event["payload"]["progress_outcome"]["workspace_mutation_proposed"],
+                false
+            );
+        }
+        assert!(!event_list
+            .iter()
+            .any(|event| event["kind"] == "WorkspacePatchProposed"));
+        assert_eq!(
+            std::fs::read(temp.path().join(".brownie/todo.md")).unwrap(),
+            original_todo
         );
-        let patch_new_text = request_payload["patch_new_text"]
-            .as_str()
-            .expect("patch new text");
-        assert!(
-            patch_new_text.contains("E-04a: Update `.github/workflows/ci.yml` Rust quality checks")
-        );
-        assert!(patch_new_text
-            .contains("E-04b: Update `.github/workflows/ci.yml` Node workspace checks"));
-        assert!(patch_new_text.contains("E-04c: Add release gate and Product Ready guard CI steps"));
-        assert!(!patch_new_text.contains("TODO-decomposition"));
-        assert!(!patch_new_text.contains("Split blocked TODO"));
     }
 
     #[test]
@@ -65012,7 +65369,7 @@ content-length: {}
     }
 
     #[test]
-    fn openai_phase_loop_slice_denies_additional_workspace_read_after_budget_exhausted() {
+    fn openai_read_budget_exhaustion_stops_without_inventing_project_changes() {
         let _lock = super::tests::lock_env();
         let _guard = EnvGuard::clear();
         let temp = tempfile::tempdir().unwrap();
@@ -65041,6 +65398,7 @@ content-length: {}
             "- [ ] E-08: Close supply-chain evidence fail-closed gaps:\n  Add coverage proving missing tools, scan command failures, and network errors cannot be treated as successful release evidence.\n\n- [ ] E-09: Produce release artifacts.\n",
         )
         .expect("todo");
+        let original_todo = std::fs::read(temp.path().join(".brownie/todo.md")).unwrap();
         let (base_url, handle) = spawn_mock_many(vec![
             r#"{"choices":[{"message":{"content":"```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Read first bounded file.\",\"input\":{\"path\":\"scripts/release-gate.mjs\"}}]}\n```"}}]}"#,
             r#"{"choices":[{"message":{"content":"```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Read second bounded file.\",\"input\":{\"path\":\"scripts/guard-supply-chain-artifact-evidence.mjs\"}}]}\n```"}}]}"#,
@@ -65081,23 +65439,20 @@ content-length: {}
                     .as_str()
                     .is_some_and(|reason| reason.contains("read budget is exhausted"))
         }));
-        let proposal = event_list
-            .iter()
-            .find(|event| event["kind"] == "WorkspacePatchProposed")
-            .expect("runtime-synthesized follow-up proposal");
-        assert_eq!(proposal["payload"]["path"], ".brownie/todo.md");
-        assert_eq!(proposal["payload"]["operation"], "patch_file");
-        assert_eq!(proposal["payload"]["validation_status"], "Valid");
-        let request_payload = crate::tests::request_only_proposal_payload(
-            run_id,
-            proposal["payload"]["proposal_id"].as_str().unwrap(),
-        );
-        let patch_new_text = request_payload["patch_new_text"]
+        let result = run.result.expect("run result");
+        assert_eq!(result["status"], "Failed");
+        assert_eq!(result["agent_loop"]["final_state"], "Failed");
+        assert!(result.get("llm_provider_failure").is_none());
+        assert!(result["agent_loop"]["completion_summary"]
             .as_str()
-            .expect("patch new text");
-        assert!(patch_new_text.contains("E-08a: Fail closed on missing supply-chain tooling"));
-        assert!(
-            patch_new_text.contains("E-08b: Fail closed on supply-chain scan and network failures")
+            .unwrap()
+            .contains("valid workspace.write proposal"));
+        assert!(!event_list
+            .iter()
+            .any(|event| event["kind"] == "WorkspacePatchProposed"));
+        assert_eq!(
+            std::fs::read(temp.path().join(".brownie/todo.md")).unwrap(),
+            original_todo
         );
     }
 
@@ -69951,3 +70306,55 @@ mod agentmodes_test_support;
 
 #[cfg(test)]
 mod json_privacy_assertions;
+
+#[cfg(test)]
+mod bounded_progress_public_projection_tests {
+    use super::*;
+
+    fn denied_read() -> Value {
+        json!({"tool_id": WORKSPACE_READ_TOOL_ID, "allowed": false,
+            "progress_outcome": {"status": "replan_required",
+                "reason_code": "workspace_read_not_admitted",
+                "next_action": "revise_inputs_or_objective",
+                "workspace_mutation_proposed": false}})
+    }
+
+    #[test]
+    fn publishes_only_the_closed_denied_read_outcome() {
+        let payload = denied_read();
+        let public = sanitize_ledger_payload(Some(payload.clone())).unwrap();
+        assert_eq!(public["progress_outcome"], payload["progress_outcome"]);
+        for (key, value) in [
+            ("raw_context", json!("private content")),
+            ("status", json!("completed")),
+            ("workspace_mutation_proposed", json!(true)),
+        ] {
+            let mut invalid = denied_read();
+            invalid["progress_outcome"][key] = value;
+            let public = sanitize_ledger_payload(Some(invalid)).unwrap();
+            assert!(public.get("progress_outcome").is_none());
+            assert!(!public.to_string().contains("private content"));
+        }
+    }
+
+    #[test]
+    fn does_not_publish_progress_for_allowed_or_other_tool_intents() {
+        let mut missing_admission = denied_read();
+        missing_admission.as_object_mut().unwrap().remove("allowed");
+        assert!(sanitize_ledger_payload(Some(missing_admission))
+            .unwrap()
+            .get("progress_outcome")
+            .is_none());
+        for (key, value) in [
+            ("allowed", json!(true)),
+            ("tool_id", json!("workspace.write")),
+        ] {
+            let mut invalid = denied_read();
+            invalid[key] = value;
+            assert!(sanitize_ledger_payload(Some(invalid))
+                .unwrap()
+                .get("progress_outcome")
+                .is_none());
+        }
+    }
+}

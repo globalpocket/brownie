@@ -298,7 +298,7 @@ phase_loop_claim_smoke_effective_batch_size() {
   esac
   if [ "$cpu_count" -le 4 ] && [ "$command_timeout_seconds" -le 90 ] && [ "$requested_batch_size" -gt 1 ]; then
     case "$shard" in
-      queue|queue-claim|queue-recovery|queue-integrity)
+      queue|queue-claim|queue-apply|queue-resume|queue-recovery|queue-integrity)
         printf '1\n'
         return 0
         ;;

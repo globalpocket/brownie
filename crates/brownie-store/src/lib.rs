@@ -3658,11 +3658,15 @@ impl TaskStore {
         params: TaskStartParams,
         headless_run_recovery_identity: Option<HeadlessRunRecoveryIdentityEvidence>,
     ) -> Result<TaskRecord> {
+        if let Some(constraints) = &params.execution_constraints {
+            constraints.validate().map_err(anyhow::Error::msg)?;
+        }
         self.ensure_durable_schema()?;
         let now = timestamp()?;
         let task_id = format!("task_{}", Uuid::new_v4());
         let run_id = format!("run_{}", Uuid::new_v4());
         let record = TaskRecord {
+            execution_constraints: params.execution_constraints,
             task_id: task_id.clone(),
             run_id: run_id.clone(),
             goal: params.goal,
@@ -3708,6 +3712,9 @@ impl TaskStore {
                 record.headless_run_recovery_identity.as_ref() == Some(recovery_identity)
             })
             .collect::<Vec<_>>();
+        for record in &matches {
+            self.validate_execution_constraint_binding(record)?;
+        }
         matches.sort_by(|a, b| a.task_id.cmp(&b.task_id).then(a.run_id.cmp(&b.run_id)));
         Ok(matches)
     }
@@ -3718,6 +3725,8 @@ impl TaskStore {
         let task_id = format!("task_{}", Uuid::new_v4());
         let run_id = format!("run_{}", Uuid::new_v4());
         let record = TaskRecord {
+            execution_constraints: self
+                .execution_constraints_for_source_run(&params.parent_run_id)?,
             task_id: task_id.clone(),
             run_id: run_id.clone(),
             goal: params.goal,
@@ -3789,6 +3798,8 @@ impl TaskStore {
         let task_id = format!("task_{}", Uuid::new_v4());
         let run_id = format!("run_{}", Uuid::new_v4());
         let record = TaskRecord {
+            execution_constraints: self
+                .execution_constraints_for_source_run(&params.provenance.source_run_id)?,
             task_id: task_id.clone(),
             run_id: run_id.clone(),
             goal: params.goal,
@@ -3869,6 +3880,8 @@ impl TaskStore {
         let task_id = format!("task_{}", Uuid::new_v4());
         let run_id = format!("run_{}", Uuid::new_v4());
         let record = TaskRecord {
+            execution_constraints: self
+                .execution_constraints_for_source_run(&params.provenance.source_run_id)?,
             task_id: task_id.clone(),
             run_id: run_id.clone(),
             goal: params.goal,
@@ -3956,6 +3969,8 @@ impl TaskStore {
         let task_id = format!("task_{}", Uuid::new_v4());
         let run_id = format!("run_{}", Uuid::new_v4());
         let record = TaskRecord {
+            execution_constraints: self
+                .execution_constraints_for_source_run(&params.provenance.source_run_id)?,
             task_id: task_id.clone(),
             run_id: run_id.clone(),
             goal: params.goal,
@@ -4062,6 +4077,8 @@ impl TaskStore {
         let task_id = format!("task_{}", Uuid::new_v4());
         let run_id = format!("run_{}", Uuid::new_v4());
         let record = TaskRecord {
+            execution_constraints: self
+                .execution_constraints_for_source_run(&params.provenance.source_run_id)?,
             task_id: task_id.clone(),
             run_id: run_id.clone(),
             goal: params.goal,
@@ -4160,6 +4177,8 @@ impl TaskStore {
         let task_id = format!("task_{}", Uuid::new_v4());
         let run_id = format!("run_{}", Uuid::new_v4());
         let record = TaskRecord {
+            execution_constraints: self
+                .execution_constraints_for_source_run(&params.provenance.source_run_id)?,
             task_id: task_id.clone(),
             run_id: run_id.clone(),
             goal: params.goal,
@@ -4244,6 +4263,13 @@ impl TaskStore {
         &self,
         params: ProductLoopStopRecoveryTaskStartParams,
     ) -> Result<ProductLoopStopRecoveryTaskStartResult> {
+        if self
+            .list_tasks()?
+            .iter()
+            .any(|record| record.execution_constraints.is_some())
+        {
+            bail!("aggregate recovery requires an explicit constrained source run");
+        }
         let _lock = self.acquire_product_loop_stop_recovery_admission_lock(
             &params.provenance.source_session_id,
             &params.provenance.source_drive_id,
@@ -4267,6 +4293,7 @@ impl TaskStore {
         let task_id = format!("task_{}", Uuid::new_v4());
         let run_id = format!("run_{}", Uuid::new_v4());
         let record = TaskRecord {
+            execution_constraints: None,
             task_id: task_id.clone(),
             run_id: run_id.clone(),
             goal: params.goal,
@@ -4570,6 +4597,7 @@ impl TaskStore {
     pub fn get_task(&self, task_id: &str) -> Result<Option<TaskRecord>> {
         for record in self.list_tasks()? {
             if record.task_id == task_id {
+                self.validate_execution_constraint_binding(&record)?;
                 return Ok(Some(record));
             }
         }
@@ -4579,6 +4607,7 @@ impl TaskStore {
     pub fn get_task_by_run_id(&self, run_id: &str) -> Result<Option<TaskRecord>> {
         for record in self.list_tasks()? {
             if record.run_id == run_id {
+                self.validate_execution_constraint_binding(&record)?;
                 return Ok(Some(record));
             }
         }
@@ -4595,6 +4624,7 @@ impl TaskStore {
                 && record.source_handoff_envelope_fingerprint.as_deref()
                     == Some(source_handoff_envelope_fingerprint)
             {
+                self.validate_execution_constraint_binding(&record)?;
                 return Ok(Some(record));
             }
         }
@@ -4613,6 +4643,7 @@ impl TaskStore {
                 && record.source_handoff_envelope_fingerprint.as_deref()
                     == Some(source_handoff_envelope_fingerprint)
             {
+                self.validate_execution_constraint_binding(&record)?;
                 return Ok(Some(record));
             }
         }
@@ -4630,6 +4661,7 @@ impl TaskStore {
                 .map(|provenance| provenance.failure_fingerprint.as_str())
                 == Some(failure_fingerprint)
             {
+                self.validate_execution_constraint_binding(&record)?;
                 return Ok(Some(record));
             }
         }
@@ -4647,6 +4679,7 @@ impl TaskStore {
                 .map(|provenance| provenance.failure_fingerprint.as_str())
                 == Some(failure_fingerprint)
             {
+                self.validate_execution_constraint_binding(&record)?;
                 return Ok(Some(record));
             }
         }
@@ -4665,6 +4698,7 @@ impl TaskStore {
                 == Some(failure_fingerprint)
                 && !self.is_terminal_failed_verification_recovery_repair_gate(&record)?
             {
+                self.validate_execution_constraint_binding(&record)?;
                 return Ok(Some(record));
             }
         }
@@ -4720,6 +4754,7 @@ impl TaskStore {
                 })
                 .unwrap_or(false)
             {
+                self.validate_execution_constraint_binding(&record)?;
                 return Ok(Some(record));
             }
         }
@@ -4743,6 +4778,7 @@ impl TaskStore {
                 })
                 .unwrap_or(false)
             {
+                self.validate_execution_constraint_binding(&record)?;
                 return Ok(Some(record));
             }
         }
@@ -4766,6 +4802,7 @@ impl TaskStore {
                 })
                 .unwrap_or(false)
             {
+                self.validate_execution_constraint_binding(&record)?;
                 return Ok(Some(record));
             }
         }
@@ -4783,6 +4820,7 @@ impl TaskStore {
                 .map(|provenance| provenance.recovery_boundary_fingerprint.as_str())
                 == Some(recovery_boundary_fingerprint)
             {
+                self.validate_execution_constraint_binding(&record)?;
                 return Ok(Some(record));
             }
         }
@@ -4815,10 +4853,11 @@ impl TaskStore {
             }
             let content = fs::read_to_string(&state_path)
                 .with_context(|| format!("failed to read {}", state_path.display()))?;
-            tasks.push(
-                serde_json::from_str(&content)
-                    .with_context(|| format!("failed to parse {}", state_path.display()))?,
-            );
+            let record: TaskRecord = serde_json::from_str(&content)
+                .with_context(|| format!("failed to parse {}", state_path.display()))?;
+            // Enumeration is metadata-only: a historical scratch ledger may be unreadable.
+            // Callers that select a task must use the validated task/run lookup.
+            tasks.push(record);
         }
         tasks.sort_by(|a: &TaskRecord, b: &TaskRecord| {
             a.created_at
@@ -4832,7 +4871,55 @@ impl TaskStore {
         self.runs_dir().join(run_id)
     }
 
+    fn execution_constraints_for_source_run(
+        &self,
+        run_id: &str,
+    ) -> Result<Option<brownie_protocol::TaskExecutionConstraints>> {
+        let source = self
+            .read_task_state_by_run_id_raw(run_id)?
+            .context("recovery execution constraints require an existing source run")?;
+        Ok(source.execution_constraints)
+    }
+
+    fn validate_execution_constraint_binding(&self, record: &TaskRecord) -> Result<()> {
+        if let Some(constraints) = &record.execution_constraints {
+            constraints.validate().map_err(anyhow::Error::msg)?;
+        }
+        let events = RunLedger::new(self.run_dir(&record.run_id)).read_events()?;
+        let mut starts = events
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::TaskStarted);
+        let bound = starts
+            .next()
+            .and_then(|event| event.payload.as_ref())
+            .and_then(|payload| payload.get("execution_constraints"));
+        let expected = record
+            .execution_constraints
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()?;
+        if bound != expected.as_ref() {
+            bail!("task execution constraints differ from durable admission");
+        }
+        if starts.any(|event| {
+            event
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.get("execution_constraints"))
+                != bound
+        }) {
+            bail!("task has conflicting execution constraint admissions");
+        }
+        Ok(())
+    }
+
     fn write_task_state(&self, record: &TaskRecord) -> Result<()> {
+        if let Some(constraints) = &record.execution_constraints {
+            constraints.validate().map_err(anyhow::Error::msg)?;
+        }
+        if self.run_dir(&record.run_id).join("state.json").exists() {
+            self.validate_execution_constraint_binding(record)?;
+        }
         self.ensure_durable_schema()?;
         let run_dir = self.run_dir(&record.run_id);
         fs::create_dir_all(&run_dir)
@@ -4851,9 +4938,12 @@ impl TaskStore {
     fn read_task_state_by_run_id_raw(&self, run_id: &str) -> Result<Option<TaskRecord>> {
         let state_path = self.run_dir(run_id).join("state.json");
         match fs::read_to_string(&state_path) {
-            Ok(content) => serde_json::from_str(&content)
-                .with_context(|| format!("failed to parse {}", state_path.display()))
-                .map(Some),
+            Ok(content) => {
+                let record: TaskRecord = serde_json::from_str(&content)
+                    .with_context(|| format!("failed to parse {}", state_path.display()))?;
+                self.validate_execution_constraint_binding(&record)?;
+                Ok(Some(record))
+            }
             Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
             Err(error) => {
                 Err(error).with_context(|| format!("failed to read {}", state_path.display()))
@@ -5405,6 +5495,30 @@ impl TaskStore {
         kind: LedgerEventKind,
         payload: Option<serde_json::Value>,
     ) -> Result<LedgerEvent> {
+        let mut payload = payload;
+        if kind == LedgerEventKind::TaskStarted {
+            if let Some(constraints) = &record.execution_constraints {
+                constraints.validate().map_err(anyhow::Error::msg)?;
+                let object = payload
+                    .get_or_insert_with(|| serde_json::json!({}))
+                    .as_object_mut()
+                    .context("task start payload must be an object")?;
+                let bound = serde_json::to_value(constraints)?;
+                if object
+                    .get("execution_constraints")
+                    .is_some_and(|value| value != &bound)
+                {
+                    bail!("task start execution constraints conflict with state");
+                }
+                object.insert("execution_constraints".into(), bound);
+            } else if payload
+                .as_ref()
+                .and_then(|value| value.get("execution_constraints"))
+                .is_some()
+            {
+                bail!("task start execution constraints missing from state");
+            }
+        }
         let payload_envelope = ledger_payload_envelope(&kind, payload.as_ref())?;
         Ok(LedgerEvent {
             event_id: format!("event_{}", Uuid::new_v4()),
@@ -6283,9 +6397,14 @@ impl RunLedger {
         }
         let mut file = OpenOptions::new()
             .create(true)
+            // Windows LockFileEx rejects append-only handles.
+            .read(true)
             .append(true)
             .open(self.run_dir.join("ledger.jsonl"))
             .context("failed to open run ledger")?;
+        // Readers must not observe a partial JSON record, and concurrent
+        // batches must not interleave if write_all needs more than one write.
+        FileExt::lock_exclusive(&file).context("failed to lock run ledger for append")?;
         file.write_all(&buffer)
             .context("failed to append run ledger events")?;
         file.sync_all()
@@ -6302,6 +6421,7 @@ impl RunLedger {
 
         let file = fs::File::open(&ledger_path)
             .with_context(|| format!("failed to open {}", ledger_path.display()))?;
+        FileExt::lock_shared(&file).context("failed to lock run ledger for read")?;
         let reader = BufReader::new(file);
         let mut events = Vec::new();
         for line in reader.lines() {
@@ -8290,6 +8410,24 @@ fn validate_tool_intent_payload_schema(
     payload: &serde_json::Value,
 ) -> Result<()> {
     let object = validate_known_payload_object(kind, payload, TOOL_INTENT_KNOWN_PAYLOAD_FIELDS)?;
+    if let Some(outcome) = object.get("progress_outcome") {
+        let expected = serde_json::json!({
+            "status": "replan_required",
+            "reason_code": "workspace_read_not_admitted",
+            "next_action": "revise_inputs_or_objective",
+            "workspace_mutation_proposed": false,
+        });
+        if !matches!(
+            kind,
+            LedgerEventKind::ToolIntentPermissionChecked | LedgerEventKind::ToolIntentDenied
+        ) || object.get("allowed") != Some(&serde_json::Value::Bool(false))
+            || object.get("tool_id").and_then(serde_json::Value::as_str) != Some("workspace.read")
+            || outcome != &expected
+        {
+            bail!("{kind:?} invalid bounded denied-read progress_outcome");
+        }
+    }
+
     for field in [
         "tool_id",
         "required_action",
@@ -9214,6 +9352,12 @@ fn validate_task_started_payload_schema(
     payload: &serde_json::Value,
 ) -> Result<()> {
     let object = validate_known_payload_object(kind, payload, TASK_STARTED_KNOWN_PAYLOAD_FIELDS)?;
+    if let Some(value) = object.get("execution_constraints") {
+        let constraints: brownie_protocol::TaskExecutionConstraints =
+            serde_json::from_value(value.clone())
+                .context("invalid task start execution constraints")?;
+        constraints.validate().map_err(anyhow::Error::msg)?;
+    }
     validate_payload_has_known_field(kind, object)?;
     validate_optional_payload_string_field(object, "status")?;
     validate_optional_payload_string_or_null_field(object, "parent_task_id")?;
@@ -9540,6 +9684,7 @@ const LLM_RESPONSE_RECEIVED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
 ];
 
 const TASK_STARTED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "execution_constraints",
     "apply_fingerprint",
     "apply_id",
     "decision_fingerprint",
@@ -10526,6 +10671,7 @@ const PARENT_JOIN_CONTINUATION_CONSUMED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
 ];
 
 const TOOL_INTENT_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "progress_outcome",
     "allowed",
     "input_summary",
     "mode_id",
@@ -12234,6 +12380,7 @@ mod tests {
 
         let error = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "must not mutate".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -12288,6 +12435,7 @@ mod tests {
 
         let error = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "must not mutate".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -12448,6 +12596,7 @@ mod tests {
 
         let error = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "disk full failpoint".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -12480,6 +12629,7 @@ mod tests {
 
         let error = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "rename denied failpoint".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -12505,6 +12655,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "preserve old state".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -12778,6 +12929,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "typed payload schema".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -12807,6 +12959,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "task completed payload validation".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -12897,6 +13050,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "permission payload validation".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -12997,6 +13151,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "tool payload validation".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -13334,6 +13489,7 @@ mod tests {
         let record = store
             .tasks()
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "codebase payload validation".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -13458,6 +13614,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "workspace patch payload schema".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -13697,6 +13854,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "headless payload schema".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -14020,6 +14178,66 @@ mod tests {
     }
 
     #[test]
+    fn ledger_read_waits_for_in_progress_append() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let run_dir = temp.path().join("run_1");
+        fs::create_dir_all(&run_dir).unwrap();
+        let payload = serde_json::json!({"status": "Completed"});
+        let event = LedgerEvent {
+            event_id: "evt_1".into(),
+            task_id: "task_1".into(),
+            run_id: "run_1".into(),
+            kind: LedgerEventKind::TaskCompleted,
+            timestamp: "2026-09-03T00:00:00Z".into(),
+            payload_envelope: ledger_payload_envelope(
+                &LedgerEventKind::TaskCompleted,
+                Some(&payload),
+            )
+            .unwrap(),
+            payload: Some(payload),
+        };
+        let bytes = format!("{}\n", serde_json::to_string(&event).unwrap()).into_bytes();
+        let mut writer = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .append(true)
+            .open(run_dir.join("ledger.jsonl"))
+            .unwrap();
+        FileExt::lock_exclusive(&writer).unwrap();
+        let split = bytes.len() / 2;
+        writer.write_all(&bytes[..split]).unwrap();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        let reader = thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let result = RunLedger::new(run_dir)
+                .read_events()
+                .map_err(|e| format!("{e:#}"));
+            result_tx.send(result).unwrap();
+        });
+        started_rx.recv().unwrap();
+        let early = result_rx.recv_timeout(Duration::from_millis(100));
+        writer.write_all(&bytes[split..]).unwrap();
+        writer.sync_all().unwrap();
+        FileExt::unlock(&writer).unwrap();
+        let result =
+            early.unwrap_or_else(|_| result_rx.recv_timeout(Duration::from_secs(5)).unwrap());
+        reader.join().unwrap();
+        let events = result.expect("reader must not parse a writer's incomplete JSON record");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_id, "evt_1");
+        // Exercise the production append handle as well as the raw writer:
+        // Windows rejects locking an append-only handle before any write.
+        let ledger = RunLedger::new(temp.path().join("run_1"));
+        let mut appended = event;
+        appended.event_id = "evt_2".into();
+        ledger
+            .append(&appended)
+            .expect("production append must lock");
+        assert_eq!(ledger.read_events().unwrap().len(), 2);
+    }
+
+    #[test]
     fn ledger_read_rejects_mismatched_payload_envelope() {
         let temp = tempfile::tempdir().expect("tempdir");
         let run_dir = temp.path().join("runs").join("run_1");
@@ -14169,6 +14387,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "late terminal race".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -14227,6 +14446,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "duplicate terminal completion".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -14285,6 +14505,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "lifecycle payload schema".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -14492,6 +14713,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "task admission payload schema".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -14621,6 +14843,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "tool planning payload schema".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -14715,6 +14938,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "subtask dispatch payload schema".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -15120,6 +15344,7 @@ mod tests {
         let store = std::sync::Arc::new(TaskStore::new(temp.path()));
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "concurrent terminal race".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -15261,6 +15486,7 @@ mod tests {
         let store = TaskStore::new(Path::new(&root));
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "terminal process loss".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -15404,6 +15630,7 @@ mod tests {
         let store = TaskStore::new(root);
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "preserve durable v1 fixture".into(),
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
@@ -15892,6 +16119,7 @@ mod tests {
 
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "test goal".into(),
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
@@ -15922,6 +16150,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "run me".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -15963,6 +16192,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "read ledger".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -16058,6 +16288,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let record = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "list me".into(),
                 mode_id: None,
                 verification_recovery_source: None,
@@ -16081,6 +16312,7 @@ mod tests {
         let store = TaskStore::new(temp.path());
         let parent = store
             .start_task(TaskStartParams {
+                execution_constraints: None,
                 goal: "parent".into(),
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
@@ -16215,5 +16447,75 @@ mod tests {
         assert!(payload["source_intent_summary"].get("input").is_none());
         assert_eq!(payload["execution_enabled"], false);
         assert_eq!(payload["scheduler_handoff_enabled"], false);
+    }
+}
+
+#[cfg(test)]
+mod generic_read_progress_schema_tests {
+    use super::*;
+
+    fn payload() -> serde_json::Value {
+        serde_json::json!({
+            "tool_id": "workspace.read", "required_action": "ReadWorkspace", "allowed": false,
+            "reason": "Repeated context read", "request_reason": "Need context", "input_summary": {},
+            "progress_outcome": {"status": "replan_required", "reason_code": "workspace_read_not_admitted",
+                "next_action": "revise_inputs_or_objective", "workspace_mutation_proposed": false}
+        })
+    }
+
+    #[test]
+    fn accepts_bounded_denied_read_progress_only() {
+        for kind in [
+            LedgerEventKind::ToolIntentPermissionChecked,
+            LedgerEventKind::ToolIntentDenied,
+        ] {
+            validate_tool_intent_payload_schema(&kind, &payload()).unwrap();
+        }
+    }
+
+    #[test]
+    fn rejects_approved_or_other_tool_progress_claims() {
+        assert!(validate_tool_intent_payload_schema(
+            &LedgerEventKind::ToolIntentApproved,
+            &payload()
+        )
+        .is_err());
+        for (key, value) in [
+            ("allowed", serde_json::json!(true)),
+            ("tool_id", serde_json::json!("workspace.write")),
+        ] {
+            let mut p = payload();
+            p[key] = value;
+            assert!(
+                validate_tool_intent_payload_schema(&LedgerEventKind::ToolIntentDenied, &p)
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_nested_fields_and_false_progress() {
+        for (key, value) in [
+            ("raw_context", serde_json::json!("secret")),
+            ("workspace_mutation_proposed", serde_json::json!(true)),
+            ("status", serde_json::json!("completed")),
+            ("next_action", serde_json::json!("apply_without_approval")),
+        ] {
+            let mut p = payload();
+            p["progress_outcome"][key] = value;
+            assert!(
+                validate_tool_intent_payload_schema(&LedgerEventKind::ToolIntentDenied, &p)
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn preserves_unknown_root_field_rejection() {
+        let mut p = payload();
+        p["unrecognized"] = serde_json::json!(true);
+        assert!(
+            validate_tool_intent_payload_schema(&LedgerEventKind::ToolIntentDenied, &p).is_err()
+        );
     }
 }

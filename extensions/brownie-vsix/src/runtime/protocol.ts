@@ -606,7 +606,18 @@ export interface ToolExecuteResult {
   output: unknown;
 }
 
+export interface TaskExecutionConstraints {
+  read_paths?: string[] | null;
+  write_paths?: string[] | null;
+  denied_read_paths?: string[];
+  denied_write_paths?: string[];
+  write_operations?: ('create_file' | 'replace_file' | 'patch_file')[] | null;
+  max_workspace_reads?: number | null;
+  requires_workspace_write_proposal?: boolean;
+}
+
 export interface TaskStartParams {
+  executionConstraints?: TaskExecutionConstraints | null;
   goal: string;
   modeId?: string;
   verificationRecoverySource?: VerificationRecoverySource | null;
@@ -953,6 +964,7 @@ export interface HeadlessRunJourneyExecution {
 }
 
 export interface HeadlessRunJourneyTaskStartEnvelope {
+  execution_constraints?: TaskExecutionConstraints | null;
   goal: string;
   mode_id?: string | null;
 }
@@ -2108,6 +2120,7 @@ export interface RecoveryCycleBudgetOutcome {
 }
 
 export interface TaskRecord {
+  execution_constraints?: TaskExecutionConstraints | null;
   task_id: string;
   run_id: string;
   goal: string;
@@ -6250,10 +6263,31 @@ export function isTaskStartResult(value: unknown): value is TaskStartResult {
   );
 }
 
+export function isTaskExecutionConstraints(value: unknown): value is TaskExecutionConstraints {
+  if (!isRecord(value) || !hasOnlyFields(value, ['read_paths', 'write_paths', 'denied_read_paths', 'denied_write_paths', 'write_operations', 'max_workspace_reads', 'requires_workspace_write_proposal'])) {
+    return false;
+  }
+  const paths = (items: unknown): boolean => Array.isArray(items) && items.length <= 128 &&
+    new Set(items).size === items.length && items.every((path) => typeof path === 'string' &&
+      path.length > 0 && new TextEncoder().encode(path).length <= 2048 &&
+      !/[\u0000-\u001f\u007f-\u009f\\:*?\[\]]/u.test(path) &&
+      path.split('/').every((part) => part !== '' && part !== '.' && part !== '..'));
+  return ['read_paths', 'write_paths'].every((key) => value[key] === undefined || value[key] === null || paths(value[key])) &&
+    ['denied_read_paths', 'denied_write_paths'].every((key) => value[key] === undefined || paths(value[key])) &&
+    (value.write_operations === undefined || value.write_operations === null ||
+      (Array.isArray(value.write_operations) && value.write_operations.length <= 3 &&
+       new Set(value.write_operations).size === value.write_operations.length &&
+       value.write_operations.every((op) => ['create_file', 'replace_file', 'patch_file'].includes(op)))) &&
+    (value.max_workspace_reads === undefined || value.max_workspace_reads === null ||
+      (typeof value.max_workspace_reads === 'number' && Number.isInteger(value.max_workspace_reads) && value.max_workspace_reads >= 0 && value.max_workspace_reads <= 0xffffffff)) &&
+    (value.requires_workspace_write_proposal === undefined || typeof value.requires_workspace_write_proposal === 'boolean');
+}
+
 export function isTaskStartParams(value: unknown): value is TaskStartParams {
   if (
     !isRecord(value) ||
-    !hasOnlyFields(value, ['goal', 'modeId', 'verificationRecoverySource', 'patchApplyRecoverySource', 'verificationRecoveryRetrySource', 'llmProviderFailureRetrySource', 'productContinuationSource']) ||
+    !hasOnlyFields(value, ['executionConstraints', 'goal', 'modeId', 'verificationRecoverySource', 'patchApplyRecoverySource', 'verificationRecoveryRetrySource', 'llmProviderFailureRetrySource', 'productContinuationSource']) ||
+    (value.executionConstraints !== undefined && value.executionConstraints !== null && !isTaskExecutionConstraints(value.executionConstraints)) ||
     typeof value.goal !== 'string' ||
     value.goal.trim().length === 0 ||
     (value.modeId !== undefined && value.modeId !== null && !isBoundedHandle(value.modeId)) ||
@@ -6272,7 +6306,7 @@ export function isTaskStartParams(value: unknown): value is TaskStartParams {
     value.llmProviderFailureRetrySource,
     value.productContinuationSource,
   ].filter((source) => source !== undefined && source !== null).length;
-  return sourceCount <= 1;
+  return sourceCount <= 1 && (sourceCount === 0 || value.executionConstraints === undefined || value.executionConstraints === null);
 }
 
 export function isTaskCancelParams(value: unknown): value is TaskCancelParams {
@@ -7208,7 +7242,8 @@ export function isHeadlessRunJourneyClosure(value: unknown): value is HeadlessRu
 export function isHeadlessRunJourneyTaskStartEnvelope(value: unknown): value is HeadlessRunJourneyTaskStartEnvelope {
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['goal', 'mode_id']) &&
+    (value.execution_constraints === undefined || value.execution_constraints === null || isTaskExecutionConstraints(value.execution_constraints)) &&
+    hasOnlyFields(value, ['goal', 'mode_id', 'execution_constraints']) &&
     typeof value.goal === 'string' &&
     value.goal.trim().length > 0 &&
     value.goal.length <= 2000 &&
@@ -9319,6 +9354,7 @@ export function isTaskRunVerificationCompletionGate(value: unknown): value is Ta
 export function isTaskRecord(value: unknown): value is TaskRecord {
   return (
     isRecord(value) &&
+    (value.execution_constraints === undefined || value.execution_constraints === null || isTaskExecutionConstraints(value.execution_constraints)) &&
     typeof value.task_id === 'string' &&
     typeof value.run_id === 'string' &&
     typeof value.goal === 'string' &&

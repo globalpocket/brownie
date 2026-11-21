@@ -36,6 +36,7 @@ fn fixture(root: &Path) -> (TaskStore, String, PathBuf) {
     let store = TaskStore::new(root);
     let task = store
         .start_task(TaskStartParams {
+            execution_constraints: None,
             goal: "Owned admission recovery fixture".into(),
             mode_id: None,
             verification_recovery_source: None,

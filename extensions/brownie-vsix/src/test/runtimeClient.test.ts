@@ -4671,6 +4671,22 @@ describe('RuntimeClient', () => {
     expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'task.start', params: { goal: 'test goal', mode_id: 'orchestrator' } }]);
   });
 
+  it('transports explicit task restrictions without converting them to goal text', async () => {
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { task_id: 'task_1', run_id: 'run_1', status: 'Created' } });
+    const constraints = { write_paths: ['notes.txt'], max_workspace_reads: 0, requires_workspace_write_proposal: true };
+    const client = new RuntimeClient(transport);
+    await client.startTask({ goal: 'result', executionConstraints: constraints });
+    expect(transport.requests[0]).toEqual({ jsonrpc: '2.0', id: 1, method: 'task.start', params: { goal: 'result', execution_constraints: constraints } });
+    expect(isTaskStartParams({ goal: 'result', executionConstraints: constraints })).toBe(true);
+    for (const invalid of [
+      { write_paths: ['../outside'] }, { write_paths: ['/absolute'] }, { write_paths: ['a', 'a'] },
+      { max_workspace_reads: -1 }, { max_workspace_reads: 0x100000000 }, { max_workspace_reads: 1.5 },
+      { write_operations: ['shell'] }, { denied_write_paths: null }, { raw_prompt: 'unexpected' },
+    ]) {
+      expect(isTaskStartParams({ goal: 'result', executionConstraints: invalid })).toBe(false);
+    }
+  });
+
   it('creates a task.start verification recovery request', async () => {
     const fingerprint = `sha256:${'a'.repeat(64)}`;
     const result = {
