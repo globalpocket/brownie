@@ -159,9 +159,11 @@ fn durable_transaction_owned_process_recovery(operation: &str, explicit: bool) {
         "tx-recorded",
         "tx-terminal",
         "changed-second",
+        "transient-second-rename-error",
         "reordered",
         "missing-second-material",
         "altered-terminal",
+        "altered-transaction-response",
     ];
     let explicit_cases = [
         "normal",
@@ -173,6 +175,7 @@ fn durable_transaction_owned_process_recovery(operation: &str, explicit: bool) {
         "changed-source-fingerprint",
         "missing-second-material",
         "altered-terminal",
+        "altered-transaction-response",
     ];
     for case in if explicit {
         explicit_cases.as_slice()
@@ -182,10 +185,14 @@ fn durable_transaction_owned_process_recovery(operation: &str, explicit: bool) {
     .iter()
     .copied()
     {
+        if case == "transient-second-rename-error" && operation != "replace_file" {
+            continue;
+        }
         let fixture = tempfile::tempdir().unwrap();
         let root = fixture.path();
         let boundary = match case {
-            "normal" => None,
+            "normal" | "transient-second-rename-error" => None,
+            "altered-transaction-response" => Some("tx-recorded"),
             "changed-second" | "reordered" | "changed-source" | "changed-source-fingerprint" => {
                 Some("tx-after-0")
             }
@@ -212,6 +219,9 @@ fn durable_transaction_owned_process_recovery(operation: &str, explicit: bool) {
                 .env("CODEX_TX_PHASE", phase)
                 .env("CODEX_TX_OPERATION", operation)
                 .env("CODEX_TX_EXPLICIT", explicit.to_string());
+            if case == "transient-second-rename-error" && phase == "setup" {
+                command.env("CODEX_TX_FAIL_RENAME_INDEX", "1");
+            }
             if let Some(boundary) = boundary {
                 let marker = root.join("boundary");
                 command
@@ -275,6 +285,7 @@ fn durable_transaction_owned_process_recovery(operation: &str, explicit: bool) {
                 | "reordered"
                 | "missing-second-material"
                 | "altered-terminal"
+                | "altered-transaction-response"
                 | "changed-source"
                 | "changed-source-fingerprint"
         );
@@ -313,6 +324,24 @@ fn durable_transaction_owned_process_recovery(operation: &str, explicit: bool) {
                     ),
                 )
                 .unwrap();
+            }
+            "altered-transaction-response" => {
+                let mut state: Value =
+                    serde_json::from_slice(&std::fs::read(&intent).unwrap()).unwrap();
+                state["result"]["apply_status"] = json!("Denied");
+                state["result"]["applied"] = json!(false);
+                std::fs::write(&intent, state.to_string()).unwrap();
+            }
+            "transient-second-rename-error" => {
+                let response: Value = serde_json::from_slice(
+                    &std::fs::read(root.join("response-setup.json")).unwrap(),
+                )
+                .unwrap();
+                assert!(response["error"].is_object(), "{response}");
+                let state: Value =
+                    serde_json::from_slice(&std::fs::read(&intent).unwrap()).unwrap();
+                let staging = state["items"][1]["staging"].as_str().unwrap();
+                assert!(root.join(staging).is_file());
             }
             "altered-terminal" => {
                 let mut state: Value =
@@ -362,7 +391,9 @@ fn durable_transaction_owned_process_recovery(operation: &str, explicit: bool) {
             .count();
         assert_eq!(
             applied,
-            usize::from(!negative || case == "altered-terminal"),
+            usize::from(
+                !negative || matches!(case, "altered-terminal" | "altered-transaction-response")
+            ),
             "{case}"
         );
         if negative {

@@ -1190,10 +1190,17 @@ pub(super) fn resume_transaction(
                         std::fs::rename(&target, &prepared.temp_path).map_err(error)?;
                     }
                     _ => {
-                        let outcome = commit_prepared_atomic_replace(prepared, &target);
-                        if outcome.failure_reason.is_some() {
-                            return Err(error("transaction item commit failed"));
+                        // The intent owns this staging file until the rename succeeds.
+                        // A transient failure must leave it available for the next retry.
+                        #[cfg(test)]
+                        if std::env::var("CODEX_TX_FAIL_RENAME_INDEX").ok().as_deref()
+                            == Some(index.to_string().as_str())
+                        {
+                            return Err(error(std::io::Error::from(
+                                std::io::ErrorKind::PermissionDenied,
+                            )));
                         }
+                        std::fs::rename(&prepared.temp_path, &target).map_err(error)?;
                     }
                 }
                 brownie_store::sync_directory_metadata(
@@ -1277,7 +1284,9 @@ pub(super) fn resume_transaction(
         .filter_map(|e| e.payload.as_ref())
         .filter(|p| p["apply_id"] == transaction.result.apply_id)
         .collect();
+    let response_digest = hex_sha256(&serde_json::to_vec(&transaction.result).map_err(error)?);
     if payloads.len() != 1
+        || payloads[0]["recorded_response_sha256"].as_str() != Some(response_digest.as_str())
         || payloads[0]["apply_status"] != "Applied"
         || payloads[0]["authorization_consumed"] != true
         || payloads[0]["transaction_items"] != json!(transaction.result.transaction_items)

@@ -203,7 +203,7 @@
         "diagnostics_mentions": 0
       },
       "crates/brownie-runtime/src/proposal_apply.rs": {
-        "line_count": 7251,
+        "line_count": 7248,
         "public_items": 8,
         "private_items": 53,
         "state_mutation_mentions": 7,
@@ -259,7 +259,7 @@
         "diagnostics_mentions": 58
       },
       "crates/brownie-runtime/src/proposal_apply_recovery.rs": {
-        "line_count": 1456,
+        "line_count": 1465,
         "public_items": 11,
         "private_items": 23,
         "state_mutation_mentions": 0,
@@ -273,7 +273,7 @@
         "diagnostics_mentions": 0
       },
       "crates/brownie-runtime/src/tests/workspace_apply_process_recovery.rs": {
-        "line_count": 1087,
+        "line_count": 1118,
         "public_items": 11,
         "private_items": 2,
         "state_mutation_mentions": 1,

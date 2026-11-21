@@ -121,10 +121,7 @@ fn record_apply_result(
         "failed_checks": &apply_result.failed_checks,
         "blocked_checks": &apply_result.blocked_checks,
     });
-    if apply_result.applied
-        && apply_result.authorization_consumed
-        && apply_result.transaction_id.is_none()
-    {
+    if apply_result.applied && apply_result.authorization_consumed {
         let encoded = serde_json::to_vec(&apply_result).map_err(|error| error.to_string())?;
         payload["recorded_response_sha256"] = json!(hex_sha256(&encoded));
     }
