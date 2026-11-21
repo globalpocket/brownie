@@ -233,6 +233,25 @@ test('compiled controller policy validates exact Runtime patch material through 
   assert.equal(reviewed.receipt.candidate_sha256, accepted.receipt.candidate_sha256);
   assert.equal(reviewed.receipt.request_sha256, `sha256:${hash(reviewed.bytes)}`);
   assert.equal(fs.readFileSync(queue, 'utf8'), original);
+  for (const stageRequest of [request, review]) {
+    const single = structuredClone(stageRequest);
+    const [hunk] = single.apply_params.patch_hunks;
+    delete single.apply_params.patch_hunks;
+    single.apply_params.patch_old_text = hunk.old_text;
+    single.apply_params.patch_new_text = hunk.new_text;
+    const singleResult = invoke(single);
+    assert.equal(singleResult.result.status, 0, singleResult.result.stdout);
+    assert.equal(singleResult.receipt.candidate_sha256, accepted.receipt.candidate_sha256);
+    assert.equal(singleResult.receipt.request_sha256, `sha256:${hash(singleResult.bytes)}`);
+    for (const invalid of [
+      { ...single.apply_params, patch_hunks: [hunk] },
+      { ...single.apply_params, patch_old_text: null },
+      { ...single.apply_params, patch_new_text: null }
+    ]) {
+      assert.equal(invoke({ ...single, apply_params: invalid }).result.status, 1);
+    }
+    assert.equal(fs.readFileSync(queue, 'utf8'), original);
+  }
   const invalidStage = { ...request, validation_stage: 'skip_validation' };
   assert.equal(invoke(invalidStage).result.status, 1);
   const alreadyApproved = structuredClone(review);

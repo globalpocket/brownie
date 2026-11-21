@@ -215,15 +215,23 @@ export function validateRuntimeProposalRequest(bytes, workspaceRoot) {
       && validationDigest(currentBytes) !== params.expected_target_sha256) throw new Error('stale queue target');
   const current = new TextDecoder('utf-8', { fatal: true }).decode(currentBytes);
   let candidate = current;
+  const singlePatch = Object.hasOwn(params, 'patch_old_text') || Object.hasOwn(params, 'patch_new_text');
+  if (singlePatch && params.patch_hunks !== undefined) throw new Error('conflicting patch material');
+  // The CLI transports an unambiguous single hunk using these two fields;
+  // occurrence-aware and multi-hunk proposals use patch_hunks instead.
+  const patchHunks = singlePatch
+    ? [{ old_text: params.patch_old_text, new_text: params.patch_new_text }]
+    : params.patch_hunks;
+  if (proposal.operation === 'patch_file'
+      && (!Array.isArray(patchHunks) || patchHunks.length < 1 || patchHunks.length > 5)) throw new Error('missing bounded patch material');
   if (metadata.bdk_state === 'decompose_todo') {
     if (proposal.operation !== 'patch_file') throw new Error('decomposition requires a bounded patch');
-    validateDecompositionTransition(metadata.selected_todo_text, candidate, params.patch_hunks);
-    validateDecompositionLeaves(params.patch_hunks[0].new_text);
+    validateDecompositionTransition(metadata.selected_todo_text, candidate, patchHunks);
+    validateDecompositionLeaves(patchHunks[0].new_text);
   }
   if (proposal.operation === 'patch_file') {
-    if (!Array.isArray(params.patch_hunks) || params.patch_hunks.length < 1 || params.patch_hunks.length > 5) throw new Error('missing bounded patch material');
     const ranges = [];
-    for (const hunk of params.patch_hunks) {
+    for (const hunk of patchHunks) {
       if (typeof hunk.old_text !== 'string' || !hunk.old_text || typeof hunk.new_text !== 'string') throw new Error('invalid patch material');
       const matches = [];
       let offset = 0;
