@@ -652,6 +652,28 @@ test('binds terminal failure recovery identity to controller and execution attem
   assert.equal(validateTaskLedger(readTaskLedger(repo)).ok, true);
 });
 
+test('rejects malformed terminal retry budgets before ledger writes', (t) => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-task-ledger-'));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const todo = '- [ ] fixture-retry: update fixture.';
+  const claimId = 'fixture-claim';
+  for (const cap of [-1, '-1', 1.5, Number.MAX_SAFE_INTEGER + 1, '', true, null, '1e2']) {
+    const result = recordTerminalFailureRecovery(repo, {
+      selected_todo: todo,
+      claim_id: claimId,
+      retry_cap: cap,
+      execution_evidence: terminalEvidence(todo, claimId)
+    });
+    assert.deepEqual(result, { ok: false, code: 'terminal_failure_retry_cap_invalid' });
+    assert.deepEqual(readTaskLedger(repo), []);
+  }
+  const result = recordTerminalFailureRecovery(repo, {
+    selected_todo: todo, claim_id: claimId, retry_cap: '2',
+    execution_evidence: terminalEvidence(todo, claimId)
+  });
+  assert.equal(result.event.retry_cap, 2);
+});
+
 test('re-records an explicitly replayed terminal block after controller rebaseline', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-task-ledger-'));
   const selectedTodo = '- [ ] E-rebaseline-explicit: Patch only `scripts/rebaseline.mjs`:\n  Route: implementation.\n  Verification: run `node --check scripts/rebaseline.mjs`.';

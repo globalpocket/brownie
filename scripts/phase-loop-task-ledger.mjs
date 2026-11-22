@@ -607,7 +607,12 @@ export function recordTerminalFailureRecovery(repoRoot, {
   if (executionEvidence.claim_id !== (claim_id ?? null) || executionEvidence.selected_todo_sha256 !== crypto.createHash('sha256').update(selected_todo).digest('hex')) {
     return { ok: false, code: 'terminal_failure_execution_evidence_mismatch' };
   }
-  if (Number(retry_cap) === 0) {
+  const normalizedRetryCap = typeof retry_cap === 'number' ? retry_cap
+    : typeof retry_cap === 'string' && /^\d+$/u.test(retry_cap) ? Number(retry_cap) : NaN;
+  if (!Number.isSafeInteger(normalizedRetryCap) || normalizedRetryCap < 0) {
+    return { ok: false, code: 'terminal_failure_retry_cap_invalid' };
+  }
+  if (normalizedRetryCap === 0) {
     return { ok: false, code: 'terminal_failure_retry_cap_zero_requires_redelegation' };
   }
   let resolvedRecoveryId = recovery_id || crypto.createHash('sha256')
@@ -672,7 +677,7 @@ export function recordTerminalFailureRecovery(repoRoot, {
     queue_generation,
     queue_fingerprint,
     provider_failure_fingerprint,
-    retry_cap: Number.isInteger(Number(retry_cap)) ? Number(retry_cap) : 0,
+    retry_cap: normalizedRetryCap,
     controller_fingerprint,
     claim_absent: Boolean(claim_absent),
     terminal_failure: true,
