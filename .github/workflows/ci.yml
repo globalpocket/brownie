@@ -221,8 +221,13 @@ jobs:
             if ($registered -cnotcontains "${test}: test") {
               throw "Required Windows recovery test is missing: $test"
             }
-            cargo test -p brownie-runtime --all-features --lib $test -- --exact
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $output = cargo test -p brownie-runtime --all-features --lib $test -- --exact
+            $testExit = $LASTEXITCODE
+            $output | Write-Output
+            if ($testExit -ne 0) { exit $testExit }
+            if ($output -cnotcontains "test $test ... ok") {
+              throw "Required Windows recovery test did not report a pass: $test"
+            }
           }
 
       - name: Verify unsupported index platform fails closed
