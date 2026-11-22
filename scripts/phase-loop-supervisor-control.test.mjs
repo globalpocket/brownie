@@ -1713,10 +1713,10 @@ Parent TODO: E-22e-release-contract-trace-binding-guard
     consecutive_failures: 0,
     detail: 'Brownie run exited successfully but repeated the same non-progress fingerprint.'
   });
-  writeJson(repo, '.brownie/private/phase-loop/todo-claims/blocked.jsonl', {
+  fs.writeFileSync(path.join(repo, '.brownie/private/phase-loop/todo-claims/blocked.jsonl'), JSON.stringify({
     selected_todo_id: 'E-22e-release-contract-trace-binding-guard',
     reason: 'invalid_patch_followed_by_no_progress'
-  });
+  }) + '\n');
 
   const result = controlPhaseLoop({ repoRoot: repo, write: false, repair: true, start: false });
   const todo = fs.readFileSync(path.join(repo, '.brownie/todo.md'), 'utf8');
@@ -1763,6 +1763,10 @@ test('fails closed to implementation delegation when terminal feedback replaces 
     todo_id: sourceId,
     selected_todo_first_line: sourceTodo.split('\n')[0]
   })}\n`);
+  const retained = { block_reason: 'controller_no_progress', todo_id: 'unrelated-fixture',
+    retry_trajectory: { key: 'retained-key', subject: { workspaceCommit: 'a'.repeat(40) }, attemptId: 'attempt-1' } };
+  const blockedPath = path.join(repo, '.brownie/private/phase-loop/todo-claims/blocked.jsonl');
+  fs.appendFileSync(blockedPath, JSON.stringify(retained) + '\n');
   const result = controlPhaseLoop({ repoRoot: repo, write: false, repair: true, start: false });
   const todo = fs.readFileSync(path.join(repo, '.brownie/todo.md'), 'utf8');
   const feedback = JSON.parse(fs.readFileSync(path.join(repo, '.brownie/private/phase-loop/todo-claims/repair-feedback.json'), 'utf8'));
@@ -1775,7 +1779,7 @@ test('fails closed to implementation delegation when terminal feedback replaces 
   assert.equal(feedback.reason, 'terminal_generated_contract_replan_requires_implementation_handoff');
   assert.equal(feedback.delegation.status, 'pending');
   assert.equal(feedback.archived_claim_path, null);
-  assert.equal(fs.readFileSync(path.join(repo, '.brownie/private/phase-loop/todo-claims/blocked.jsonl'), 'utf8'), '');
+  assert.deepEqual(JSON.parse(fs.readFileSync(blockedPath, 'utf8')), retained);
 });
 
 test('recovers a legacy todo-decomposition terminal leaf through the bounded source handoff', () => {
