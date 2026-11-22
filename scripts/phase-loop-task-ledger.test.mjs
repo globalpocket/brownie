@@ -674,6 +674,42 @@ test('rejects malformed terminal retry budgets before ledger writes', (t) => {
   assert.equal(result.event.retry_cap, 2);
 });
 
+test('persists one terminal retry trajectory across separate claims and controller identities', (t) => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-task-ledger-'));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const selectedTodo = '- [ ] fixture-trajectory: update fixture.';
+  const recovery = {
+    selected_todo: selectedTodo,
+    claim_id: 'claim-0',
+    run_id: 'run-0',
+    retry_cap: 1,
+    workspace_commit: 'b'.repeat(40),
+    mode_pack_version: 'fixture-pack-1',
+    provider_failure_fingerprint: 'fixture-provider-unavailable',
+    execution_evidence: terminalEvidence(selectedTodo, 'claim-0'),
+  };
+  for (let i = 0; i < 12; i += 1) {
+    const claimId = `claim-${i}`;
+    assert.equal(recordTerminalFailureRecovery(repo, {
+      ...recovery,
+      claim_id: claimId,
+      run_id: `run-${i}`,
+      controller_fingerprint: `controller-${i}`,
+      execution_evidence: terminalEvidence(selectedTodo, claimId),
+    }).ok, true);
+  }
+  assert.equal(recordTerminalFailureRecovery(repo, {
+    ...recovery, controller_fingerprint: 'reloaded-controller',
+  }).ok, true);
+  assert.deepEqual(recordTerminalFailureRecovery(repo, {
+    ...recovery, workspace_commit: 'b'.repeat(64),
+  }), { ok: false, code: 'terminal_failure_trajectory_identity_invalid' });
+  const attempts = readTaskLedger(repo).filter((event) => event.to_state === 'failed');
+  assert.equal(attempts.length, 13);
+  assert.equal(new Set(attempts.map((event) => event.retry_trajectory.key)).size, 1);
+  assert.equal(new Set(attempts.map((event) => event.retry_trajectory.attemptId)).size, 12);
+});
+
 test('re-records an explicitly replayed terminal block after controller rebaseline', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-task-ledger-'));
   const selectedTodo = '- [ ] E-rebaseline-explicit: Patch only `scripts/rebaseline.mjs`:\n  Route: implementation.\n  Verification: run `node --check scripts/rebaseline.mjs`.';

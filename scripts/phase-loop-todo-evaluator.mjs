@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   scoreTodoDecompositionText,
@@ -14,6 +15,7 @@ import {
 } from './phase-loop-todo-state.mjs';
 import { boundedScopes as boundedScopesFromFirstLine } from './phase-loop-bounded-scope.mjs';
 import { findCleanMergedDeliveryCandidate } from './phase-loop-delivery-integrity.mjs';
+import { persistedTerminalFailureBudgets, readBlockedClaimRecords } from './phase-loop-terminal-failure-budget.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -533,7 +535,7 @@ export function needsTodoDecomposition(block) {
 }
 
 function readBlockedClaims(blockedPath, queueFingerprint, controllerFingerprint = '') {
-  if (!blockedPath || !fs.existsSync(blockedPath) || !fs.statSync(blockedPath).isFile()) {
+  if (!blockedPath) {
     return {
       hashes: new Set(),
       firstLines: new Set(),
@@ -542,6 +544,7 @@ function readBlockedClaims(blockedPath, queueFingerprint, controllerFingerprint 
       stableIds: new Set(),
       stablePrefixes: new Set(),
       stableScopeContracts: new Set(),
+      terminalFailureTrajectories: [],
       terminalFailureAttempts: new Map()
     };
   }
@@ -553,15 +556,20 @@ function readBlockedClaims(blockedPath, queueFingerprint, controllerFingerprint 
   const stablePrefixes = new Set();
   const stableScopeContracts = new Set();
   const terminalFailureAttempts = new Map();
-  for (const line of fs.readFileSync(blockedPath, 'utf8').split('\n')) {
-    if (!line.trim()) {
-      continue;
-    }
+  const terminalFailureTrajectories = [];
+  for (const record of readBlockedClaimRecords(blockedPath)) {
     try {
-      const record = JSON.parse(line);
       const recordHasController = typeof record.controller_fingerprint === 'string' && record.controller_fingerprint;
       const recordMatchesController = !controllerFingerprint || !recordHasController || record.controller_fingerprint === controllerFingerprint;
+      if (record.block_reason === 'controller_no_progress') {
+        terminalFailureTrajectories.push(record);
+        continue;
+      }
       const terminalRuntimeFailure = record.block_reason === 'terminal_runtime_failure';
+      if (terminalRuntimeFailure) {
+        terminalFailureTrajectories.push(record);
+        if (record.retry_trajectory) continue;
+      }
       // Hash/first-line suppression predates controller-bound blocked records.
       // Once a controller identity is present, stale generic suppression must
       // not survive a controller rebaseline, especially for generated leaves.
@@ -644,10 +652,10 @@ function readBlockedClaims(blockedPath, queueFingerprint, controllerFingerprint 
         }
       }
     } catch {
-      // Ignore corrupt historical blocked entries; the phase-loop guard remains fail-closed elsewhere.
+      // Preserve existing handling of optional historical metadata fields.
     }
   }
-  return { hashes, firstLines, currentControllerHashes, currentControllerFirstLines, stableIds, stablePrefixes, stableScopeContracts, terminalFailureAttempts };
+  return { hashes, firstLines, currentControllerHashes, currentControllerFirstLines, stableIds, stablePrefixes, stableScopeContracts, terminalFailureAttempts, terminalFailureTrajectories };
 }
 
 export function selectFirstSchedulableTodo(text, options = {}) {
@@ -735,13 +743,35 @@ export function selectFirstSchedulableTodo(text, options = {}) {
       continue;
     }
     const firstLine = block.split('\n')[0]?.trim() ?? '';
+    let persistedBudgets;
+    try {
+      persistedBudgets = persistedTerminalFailureBudgets(blocked.terminalFailureTrajectories, {
+        objectiveSha256: blockHash,
+        todoFirstLine: firstLine,
+        workspaceCommit: options.workspaceCommit,
+        modePackVersion: options.modePackVersion,
+      });
+    } catch {
+      dependencyBlockedIds.add(id);
+      continue;
+    }
     const terminalFailureAttempts = [...blocked.terminalFailureAttempts.values()].filter((entry) => (
       (entry.todo_hash === blockHash || entry.todo_first_line === firstLine)
       && (!options.controllerFingerprint || entry.controller_fingerprint === options.controllerFingerprint)
     ));
-    const terminalFailureRetryAvailable = terminalFailureAttempts.some((entry) => entry.count <= entry.retry_cap);
-    const terminalFailureRetryExhausted = terminalFailureAttempts.length > 0 && !terminalFailureRetryAvailable;
+    const terminalFailureRetryAvailable = persistedBudgets.length
+      ? persistedBudgets.every((budget) => !budget.exhausted)
+      : terminalFailureAttempts.some((entry) => entry.count <= entry.retry_cap);
+    const terminalFailureRetryExhausted =
+      (persistedBudgets.length > 0 || terminalFailureAttempts.length > 0) && !terminalFailureRetryAvailable;
     if (terminalFailureRetryExhausted) {
+      // A matching clean merge permits re-verification of an existing delivery.
+      // Exhausted attempts still bar fresh implementation and do not resolve dependencies.
+      if (options.repoRoot && findCleanMergedDeliveryCandidate({
+        repoRoot: options.repoRoot, selectedTodo: block,
+      }).valid) {
+        return block;
+      }
       dependencyBlockedIds.add(id);
       continue;
     }
@@ -785,6 +815,14 @@ export function selectFirstSchedulableTodo(text, options = {}) {
 }
 
 export function evaluateTodoQueue(text, options = {}) {
+  let workspaceCommit = options.workspaceCommit;
+  if (workspaceCommit === undefined && options.repoRoot) {
+    const head = spawnSync('git', ['rev-parse', '--verify', 'HEAD'], {
+      cwd: options.repoRoot, encoding: 'utf8', timeout: 5000,
+    });
+    const commit = head.stdout?.trim();
+    if (head.status === 0 && /^[a-f0-9]{40}$/u.test(commit ?? '')) workspaceCommit = commit;
+  }
   const todoState = options.todoState ?? (
     options.repoRoot
       ? loadTodoState(options.repoRoot, text, {
@@ -797,7 +835,7 @@ export function evaluateTodoQueue(text, options = {}) {
           completionRecords: options.todoCompletionRecords
         })
   );
-  const selected = selectFirstSchedulableTodo(text, { ...options, todoState });
+  const selected = selectFirstSchedulableTodo(text, { ...options, todoState, workspaceCommit });
   const decomposition = needsTodoDecomposition(selected);
   return {
     schema_version: 1,
@@ -830,6 +868,9 @@ function parseArgs(argv) {
     } else if (key === '--controller-fingerprint') {
       args.controllerFingerprint = value;
       index += 1;
+    } else if (key === '--workspace-commit') {
+      args.workspaceCommit = value;
+      index += 1;
     } else if (key === '--exclude-todo-sha256') {
       args.excludedTodoHashes.push(value);
       index += 1;
@@ -859,6 +900,7 @@ if (isMainModule()) {
     blockedPath: args.blocked,
     claimDir: args.claimDir,
     controllerFingerprint: args.controllerFingerprint,
+    workspaceCommit: args.workspaceCommit,
     excludedTodoHashes: args.excludedTodoHashes
   });
   if (args.mode === 'score' || args.mode === 'needs-decomposition' || args.json) {

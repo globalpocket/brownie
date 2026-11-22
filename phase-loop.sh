@@ -1173,6 +1173,7 @@ todo_first_pending_item() {
       --blocked "$TODO_BLOCKED_FILE"
       --claim-dir "$TODO_CLAIM_DIR"
       --controller-fingerprint "$(phase_loop_controller_fingerprint)"
+      --workspace-commit "$(git -C "$PHASE_LOOP_WORKSPACE_ROOT" rev-parse HEAD 2>/dev/null || true)"
     )
     local suppressed_hash
     for suppressed_hash in "${suppressed_todo_hashes[@]-}"; do
@@ -1185,7 +1186,8 @@ todo_first_pending_item() {
     if [ -z "$selected_todo" ]; then
       return 0
     fi
-    if [ "$PHASE_LOOP_REBASELINE_RETRY_ALLOWED" -eq 1 ] || ! terminal_failure_retry_suppressed_for_todo "$selected_todo"; then
+    if { [ "$PHASE_LOOP_REBASELINE_RETRY_ALLOWED" -eq 1 ] && ! terminal_failure_trajectory_exhausted_for_todo "$selected_todo"; } ||
+       ! terminal_failure_retry_suppressed_for_todo "$selected_todo"; then
       printf '%s\n' "$selected_todo"
       return 0
     fi
@@ -1194,6 +1196,12 @@ todo_first_pending_item() {
     # evaluator request so dependency resolution still sees the failed TODO as
     # unresolved and can select only an independent sibling.
     selected_hash="$(printf '%s' "$selected_todo" | shasum -a 256 | awk '{ print $1 }')"
+    for suppressed_hash in "${suppressed_todo_hashes[@]-}"; do
+      if [ "$suppressed_hash" = "$selected_hash" ]; then
+        printf '%s terminal_retry_selection_repeated_excluded_candidate=true sha256=%s\n' "$(now_utc)" "$selected_hash" >> "$SUPERVISOR_LOG"
+        return 0
+      fi
+    done
     suppressed_todo_hashes+=("$selected_hash")
   done
 }
@@ -2612,6 +2620,7 @@ record_terminal_failure_todo_claim() {
   local run_stamp="$1"
   local progress_file="$2"
   local context selected_todo claim_id queue_generation queue_fingerprint provider_failure_fingerprint claim_absent recovery_output recovery_status recovery_id controller_fingerprint retry_cap execution_evidence
+  local workspace_commit mode_pack_version retry_trajectory
   if ! validate_terminal_failure_retry_cap; then
     PHASE_LOOP_TASK_LEDGER_FAILURE=1
     PHASE_LOOP_TASK_LEDGER_FAILURE_DETAIL="Invalid terminal failure retry cap before durable recovery recording: ${PHASE_LOOP_TERMINAL_FAILURE_RETRY_CAP_VALIDATION_DETAIL:-unknown validation failure}"
@@ -2672,6 +2681,8 @@ print(json.dumps({
     "queue_generation": claim.get("queue_generation") or projection.get("queue_generation") or queue_state.get("generation"),
     "queue_fingerprint": str(claim.get("queue_fingerprint") or projection.get("queue_fingerprint") or queue_state.get("fingerprint") or ""),
     "provider_failure_fingerprint": str(projection.get("provider_failure_fingerprint") or ""),
+    "workspace_commit": str(claim.get("baseline_commit") or ""),
+    "mode_pack_version": str(claim.get("mode_pack_version") or ""),
     "claim_absent": claim_absent,
 }, ensure_ascii=False, sort_keys=True))
 PY
@@ -2685,6 +2696,8 @@ PY
   queue_generation="$(printf '%s' "$context" | python3 -c 'import json,sys; print(json.load(sys.stdin)["queue_generation"] or "")')"
   queue_fingerprint="$(printf '%s' "$context" | python3 -c 'import json,sys; print(json.load(sys.stdin)["queue_fingerprint"])')"
   provider_failure_fingerprint="$(printf '%s' "$context" | python3 -c 'import json,sys; print(json.load(sys.stdin)["provider_failure_fingerprint"])')"
+  workspace_commit="$(printf '%s' "$context" | python3 -c 'import json,sys; print(json.load(sys.stdin)["workspace_commit"])')"
+  mode_pack_version="$(printf '%s' "$context" | python3 -c 'import json,sys; print(json.load(sys.stdin)["mode_pack_version"])')"
   claim_absent="$(printf '%s' "$context" | python3 -c 'import json,sys; print("true" if json.load(sys.stdin)["claim_absent"] else "false")')"
   if [ -z "$claim_id" ]; then
     PHASE_LOOP_TASK_LEDGER_FAILURE=1
@@ -2705,6 +2718,8 @@ PY
         --queue-generation "$queue_generation" \
         --queue-fingerprint "$queue_fingerprint" \
         --provider-failure-fingerprint "$provider_failure_fingerprint" \
+        --workspace-commit "$workspace_commit" \
+        --mode-pack-version "$mode_pack_version" \
         --retry-cap "$retry_cap" \
         --controller-fingerprint "$controller_fingerprint" \
         --execution-evidence "$execution_evidence" \
@@ -2757,7 +2772,8 @@ except Exception: print("")' 2>/dev/null || true)"
     return 78
   fi
   local blocked_record_status
-  if python3 - "$TODO_BLOCKED_FILE" "$selected_todo" "$claim_id" "$queue_generation" "$queue_fingerprint" "$provider_failure_fingerprint" "$recovery_id" "$run_stamp" "$retry_cap" "$claim_absent" "$(phase_loop_controller_fingerprint)" <<'PY'
+  retry_trajectory="$(printf '%s' "$recovery_output" | python3 -c 'import json,sys; print(json.dumps((json.load(sys.stdin).get("event") or {}).get("retry_trajectory")))')"
+  if python3 - "$TODO_BLOCKED_FILE" "$selected_todo" "$claim_id" "$queue_generation" "$queue_fingerprint" "$provider_failure_fingerprint" "$recovery_id" "$run_stamp" "$retry_cap" "$claim_absent" "$controller_fingerprint" "$retry_trajectory" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -2784,6 +2800,9 @@ record = {
     "claim_absent": sys.argv[10] == "true",
     "controller_fingerprint": sys.argv[11],
 }
+retry_trajectory = json.loads(sys.argv[12])
+if retry_trajectory is not None:
+    record["retry_trajectory"] = retry_trajectory
 blocked_path.parent.mkdir(parents=True, exist_ok=True)
 existing = []
 if blocked_path.exists():
@@ -2955,9 +2974,30 @@ record_invalid_decomposition_leaf_claim() {
   write_status "blocked_todo_recorded" "$detail" "invalid-leaf-$run_stamp" "0" "${CONSECUTIVE_FAILURES:-0}"
 }
 
+terminal_failure_trajectory_retry_state() {
+  local workspace_commit result=0
+  workspace_commit="$(git -C "$PHASE_LOOP_WORKSPACE_ROOT" rev-parse HEAD 2>/dev/null || true)"
+  node "$ROOT_DIR/scripts/phase-loop-terminal-failure-budget.mjs" "$TODO_BLOCKED_FILE" "$workspace_commit" "$@" || result=$?
+  case "$result" in
+    0|1|2) return "$result" ;;
+    *) return 2 ;;
+  esac
+}
+
+record_controller_no_progress_attempt() {
+  local run_stamp="$1" failure_class="$2"
+  terminal_failure_trajectory_retry_state record-no-progress "$TODO_CLAIM_FILE" "" "$run_stamp" "no_progress:$failure_class" "$PHASE_LOOP_TERMINAL_FAILURE_RETRY_CAP" || return 78
+  sync_parent_dir "$TODO_CLAIM_DIR"
+}
+
 terminal_failure_retry_state_for_claim() {
   if [ ! -f "$TODO_CLAIM_FILE" ] || [ ! -f "$TODO_BLOCKED_FILE" ]; then
     return 1
+  fi
+  local trajectory_status=0
+  terminal_failure_trajectory_retry_state claim "$TODO_CLAIM_FILE" "$PROGRESS_STATE_FILE" || trajectory_status=$?
+  if [ "$trajectory_status" -ne 1 ]; then
+    return "$trajectory_status"
   fi
   python3 - "$TODO_CLAIM_FILE" "$TODO_BLOCKED_FILE" "$PROGRESS_STATE_FILE" "$(phase_loop_controller_fingerprint)" <<'PY'
 import hashlib
@@ -2997,6 +3037,8 @@ for line in blocked_path.read_text(encoding="utf-8").splitlines():
         continue
     if record.get("block_reason") != "terminal_runtime_failure":
         continue
+    if record.get("retry_trajectory"):
+        continue
     if record.get("controller_fingerprint") != controller:
         continue
     if provider_failure_fingerprint and str(record.get("provider_failure_fingerprint") or "") != provider_failure_fingerprint:
@@ -3019,10 +3061,22 @@ raise SystemExit(0 if count <= retry_cap else 2)
 PY
 }
 
+terminal_failure_trajectory_exhausted_for_todo() {
+  local trajectory_status=0
+  [ -f "$TODO_BLOCKED_FILE" ] || return 1
+  terminal_failure_trajectory_retry_state todo "$1" || trajectory_status=$?
+  [ "$trajectory_status" -eq 2 ]
+}
+
 terminal_failure_retry_state_for_todo() {
   local selected_todo="$1"
   if [ ! -f "$TODO_BLOCKED_FILE" ]; then
     return 1
+  fi
+  local trajectory_status=0
+  terminal_failure_trajectory_retry_state todo "$selected_todo" || trajectory_status=$?
+  if [ "$trajectory_status" -ne 1 ]; then
+    return "$trajectory_status"
   fi
   python3 - "$TODO_BLOCKED_FILE" "$selected_todo" "$(phase_loop_controller_fingerprint)" <<'PY'
 import hashlib
@@ -3045,6 +3099,8 @@ for line in blocked_path.read_text(encoding="utf-8").splitlines():
     except Exception:
         continue
     if record.get("block_reason") != "terminal_runtime_failure":
+        continue
+    if record.get("retry_trajectory"):
         continue
     if record.get("controller_fingerprint") != controller:
         continue
@@ -14194,7 +14250,8 @@ claim_first_pending_todo() {
     if [ -z "$selected_todo" ]; then
       return 1
     fi
-    if [ "$PHASE_LOOP_REBASELINE_RETRY_ALLOWED" -ne 1 ] && terminal_failure_retry_suppressed_for_todo "$selected_todo"; then
+    if { [ "$PHASE_LOOP_REBASELINE_RETRY_ALLOWED" -ne 1 ] || terminal_failure_trajectory_exhausted_for_todo "$selected_todo"; } &&
+       terminal_failure_retry_suppressed_for_todo "$selected_todo"; then
       printf '%s terminal_failure_retry_suppressed=true selected_todo=%s\n' "$(now_utc)" "$selected_todo" >> "$SUPERVISOR_LOG"
       return 1
     fi
@@ -20356,7 +20413,7 @@ PY
     else
       printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
       write_status "no_progress" "$detail" "$run_stamp" "76" "${CONSECUTIVE_FAILURES:-1}"
-      write_bdk_trajectory_event "$run_stamp" "todo.replanned" '{"reason":"verified_noop_fallback_failed_repair_feedback_recorded"}'
+      write_bdk_trajectory_event "$run_stamp" "todo.repair_feedback" '{"reason":"verified_noop_fallback_failed_repair_feedback_recorded","delivery_progress":false}'
       return 76
     fi
   fi
@@ -22360,13 +22417,17 @@ if isinstance(projection, dict) and projection.get("objective_apply_stalled") is
 sys.exit(0 if same_count >= 3 else 1)
 PY
         then
+          if ! record_controller_no_progress_attempt "$run_stamp" "${recovery_hint%%:*}"; then
+            write_status "blocked" "Could not persist the no-progress attempt before claim archival." "$run_id" "78" "${CONSECUTIVE_FAILURES:-1}"
+            return 78
+          fi
           archive_stale_todo_claim "$run_stamp"
           clear_repair_feedback
           detail="Archived stale actionable-terminal TODO claim after repeated no-progress so the next supervisor iteration creates a fresh retry claim. recovery=$recovery_hint stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
-          write_status "last_run_succeeded" "$detail" "$run_id" "0" "0"
+          write_status "no_progress" "$detail" "$run_id" "76" "${CONSECUTIVE_FAILURES:-1}"
           printf '%s run=%s actionable_terminal_stale_claim_archived=true recovery=%s progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$recovery_hint" "$PROGRESS_STATE_FILE" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
-          write_bdk_trajectory_event "$run_stamp" "todo.replanned" '{"reason":"actionable_terminal_fresh_claim_retry"}'
-          return 0
+          write_bdk_trajectory_event "$run_stamp" "todo.repair_feedback" '{"reason":"actionable_terminal_fresh_claim_retry","delivery_progress":false}'
+          return 76
         fi
         if active_todo_claim_exists; then
           local restored_runtime_terminal_target=0
@@ -22450,7 +22511,11 @@ PY
           return 0
         fi
         printf '%s run=%s exit=%s recovery=%s progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$exit_code" "$recovery_hint" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
-        write_bdk_trajectory_event "$run_stamp" "todo.replanned" '{"reason":"no_progress"}'
+        if active_todo_claim_exists && ! record_controller_no_progress_attempt "$run_stamp" "${recovery_hint%%:*}"; then
+          write_status "blocked" "Could not persist the no-progress attempt before retry." "$run_id" "78" "${CONSECUTIVE_FAILURES:-1}"
+          return 78
+        fi
+        write_bdk_trajectory_event "$run_stamp" "todo.repair_feedback" '{"reason":"no_progress","delivery_progress":false}'
         return 76
         ;;
       non_progress_success)

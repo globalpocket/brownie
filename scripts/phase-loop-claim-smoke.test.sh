@@ -1037,6 +1037,9 @@ fi
 if [ "${PHASE_LOOP_TEST_REMOVE_CLAIM:-0}" = "1" ]; then
   rm -f "$PHASE_LOOP_STATE_DIR/todo-claims/current.json"
 fi
+if [ "${PHASE_LOOP_TEST_BLOCK_TERMINAL_APPEND:-0}" = "1" ]; then
+  mkdir "$PHASE_LOOP_STATE_DIR/todo-claims/blocked.jsonl"
+fi
 cat <<'JSON'
 {
   "command": "run",
@@ -2254,7 +2257,6 @@ blocked_append_failure_prompt="$(mktemp)"
 blocked_append_failure_todo="$(mktemp)"
 git -C "$blocked_append_failure_workspace" init -b main >/dev/null
 git -C "$blocked_append_failure_workspace" -c user.name=Brownie -c user.email=brownie@example.invalid commit --allow-empty -m init >/dev/null
-mkdir -p "$blocked_append_failure_state/todo-claims/blocked.jsonl"
 printf 'base prompt\n' > "$blocked_append_failure_prompt"
 printf -- '- [ ] E-blocked-append-failure: Patch only `scripts/blocked-append-failure.mjs`:\n  Route: implementation.\n  Verification: run `node --check scripts/blocked-append-failure.mjs`.\n\n- [ ] E-blocked-append-blocker: Blocker: external recovery evidence is unavailable.\n  Route: documentation.\n  Completion condition: the owner supplies the recovery evidence.\n  Verification: blocker: exact missing evidence is named before any workspace patch.\n' > "$blocked_append_failure_todo"
 set +e
@@ -2264,6 +2266,7 @@ PHASE_LOOP_TODO="$blocked_append_failure_todo" \
 BROWNIE_BIN="$fake_brownie_terminal_no_eligible" \
 PHASE_LOOP_WORKSPACE_ROOT="$blocked_append_failure_workspace" \
 PHASE_LOOP_TERMINAL_FAILURE_RETRY_CAP=1 \
+PHASE_LOOP_TEST_BLOCK_TERMINAL_APPEND=1 \
 run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 78 "$PHASE_LOOP" run-once >/dev/null
 blocked_append_failure_exit="$?"
 set -e
@@ -4544,7 +4547,7 @@ assert progress["classification"] == "no_progress", progress
 assert progress["same_progress_count"] == 3, progress
 assert progress["meaningful_progress"] is False, progress
 PY
-python3 - "$state_stagnation/bdk-harness-feedback.json" "$state_stagnation/trajectories" <<'PY'
+python3 - "$state_stagnation/bdk-harness-feedback.json" "$state_stagnation/trajectories" "$state_stagnation/todo-claims/blocked.jsonl" <<'PY'
 import json
 import pathlib
 import sys
@@ -4555,8 +4558,20 @@ latest = sorted(trajectory_dir.glob("*.jsonl"))[-1]
 records = [json.loads(line) for line in latest.read_text(encoding="utf-8").splitlines() if line.strip()]
 events = [event for record in records for event in record.get("events", [])]
 assert feedback["ok"] is True, feedback
-assert feedback["terminal_event_count"] == 1, feedback
-assert any(event.get("type") == "todo.replanned" for event in events), events
+assert feedback["terminal_event_count"] == 0, feedback
+assert not any(event.get("type") == "todo.replanned" for event in events), events
+assert any(
+    event.get("type") == "todo.repair_feedback"
+    and event.get("payload", {}).get("delivery_progress") is False
+    for event in events
+), events
+ledger = [json.loads(line) for line in pathlib.Path(sys.argv[3]).read_text(encoding="utf-8").splitlines()]
+assert any(
+    row.get("block_reason") == "stalled_leaf_contract_replan"
+    and row.get("claim_id") == feedback["latest_claim_id"]
+    and row.get("todo_id") == "B-01"
+    for row in ledger
+), ledger
 assert all(".brownie/private/" not in json.dumps(event.get("payload", {})) for event in events), events
 PY
 git -C "$queue_stagnation_workspace" restore --worktree -- .brownie
@@ -5966,6 +5981,7 @@ cp "$REPO_ROOT/scripts/phase-loop-todo-state.mjs" "$release_ops_workspace/script
 cp "$REPO_ROOT/scripts/phase-loop-delivery-integrity.mjs" "$release_ops_workspace/scripts/phase-loop-delivery-integrity.mjs"
 cp "$REPO_ROOT/scripts/phase-loop-historical-derived-delivery-integrity.mjs" "$release_ops_workspace/scripts/phase-loop-historical-derived-delivery-integrity.mjs"
 cp "$REPO_ROOT/scripts/phase-loop-todo-evaluator.mjs" "$release_ops_workspace/scripts/phase-loop-todo-evaluator.mjs"
+cp "$REPO_ROOT/scripts/phase-loop-terminal-failure-budget.mjs" "$release_ops_workspace/scripts/phase-loop-terminal-failure-budget.mjs"
 cp "$REPO_ROOT/scripts/phase-loop-release-ops-blocker.mjs" "$release_ops_workspace/scripts/phase-loop-release-ops-blocker.mjs"
 printf '{"scripts":{}}\n' > "$release_ops_workspace/package.json"
 printf '{"product_ready":false}\n' > "$release_ops_workspace/docs/architecture/phase-value-manifest.json"
