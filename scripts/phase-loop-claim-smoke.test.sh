@@ -4544,7 +4544,7 @@ assert progress["classification"] == "no_progress", progress
 assert progress["same_progress_count"] == 3, progress
 assert progress["meaningful_progress"] is False, progress
 PY
-python3 - "$state_stagnation/bdk-harness-feedback.json" "$state_stagnation/trajectories" <<'PY'
+python3 - "$state_stagnation/bdk-harness-feedback.json" "$state_stagnation/trajectories" "$state_stagnation/todo-claims/blocked.jsonl" <<'PY'
 import json
 import pathlib
 import sys
@@ -4555,8 +4555,20 @@ latest = sorted(trajectory_dir.glob("*.jsonl"))[-1]
 records = [json.loads(line) for line in latest.read_text(encoding="utf-8").splitlines() if line.strip()]
 events = [event for record in records for event in record.get("events", [])]
 assert feedback["ok"] is True, feedback
-assert feedback["terminal_event_count"] == 1, feedback
-assert any(event.get("type") == "todo.replanned" for event in events), events
+assert feedback["terminal_event_count"] == 0, feedback
+assert not any(event.get("type") == "todo.replanned" for event in events), events
+assert any(
+    event.get("type") == "todo.repair_feedback"
+    and event.get("payload", {}).get("delivery_progress") is False
+    for event in events
+), events
+ledger = [json.loads(line) for line in pathlib.Path(sys.argv[3]).read_text(encoding="utf-8").splitlines()]
+assert any(
+    row.get("block_reason") == "stalled_leaf_contract_replan"
+    and row.get("claim_id") == feedback["latest_claim_id"]
+    and row.get("todo_id") == "B-01"
+    for row in ledger
+), ledger
 assert all(".brownie/private/" not in json.dumps(event.get("payload", {})) for event in events), events
 PY
 git -C "$queue_stagnation_workspace" restore --worktree -- .brownie
