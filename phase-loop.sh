@@ -22521,9 +22521,11 @@ run_brownie_once() {
     return 78
   fi
   if ! validate_terminal_failure_retry_cap; then
+    PHASE_LOOP_PERMANENT_FAILURE_REASON="invalid_terminal_failure_retry_cap"
     return 78
   fi
   if ! validate_runtime_authorization_rebaseline_cap; then
+    PHASE_LOOP_PERMANENT_FAILURE_REASON="invalid_runtime_authorization_rebaseline_cap"
     return 78
   fi
   # Review state is authoritative over further implementation attempts.  A
@@ -22889,6 +22891,7 @@ supervise() {
   printf '%s supervisor pid=%s started\n' "$(now_utc)" "$$" >> "$SUPERVISOR_LOG"
 
   local CONSECUTIVE_FAILURES=0
+  local PHASE_LOOP_PERMANENT_FAILURE_REASON
   local backoff todo_status
   while true; do
     if [ -f "$STOP_FILE" ]; then
@@ -22921,6 +22924,7 @@ supervise() {
       exit "$todo_status"
     fi
 
+    PHASE_LOOP_PERMANENT_FAILURE_REASON=""
     if run_brownie_once; then
       # `set +e` is intentional for durable cleanup, so a legacy branch may
       # ignore the common-writer return value.  Never let that turn a refused
@@ -22941,6 +22945,14 @@ supervise() {
       interruptible_sleep "$PHASE_LOOP_INTERVAL_SECONDS" || true
     else
       local run_status=$?
+      if [ "$run_status" -eq 78 ]; then
+        local reason="${PHASE_LOOP_PERMANENT_FAILURE_REASON:-configuration_or_integrity_refused}"
+        printf '%s permanent_failure=true exit_code=%s reason=%s\n' "$(now_utc)" "$run_status" "$reason" >> "$SUPERVISOR_LOG"
+        if [ -n "$PHASE_LOOP_PERMANENT_FAILURE_REASON" ]; then
+          write_status "blocked" "$reason" "" "$run_status" "$CONSECUTIVE_FAILURES"
+        fi
+        exit "$run_status"
+      fi
       if [ "$run_status" -eq 65 ]; then
         printf '%s owner_blockers_only observed; exiting supervisor\n' "$(now_utc)" >> "$SUPERVISOR_LOG"
         exit 0
