@@ -53,6 +53,42 @@ test('fresh queue evaluators never reopen an exhausted typed terminal trajectory
   assert.equal(run('changed-workspace-controller', 'b'.repeat(40)), todo);
 });
 
+test('fresh queue evaluators never reopen exhausted controller no-progress', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-queued-trajectory-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const blockedPath = path.join(dir, 'blocked.jsonl');
+  const todo = `- [ ] fixture-trajectory: Patch only \`scripts/fixture.mjs\`:
+  Route: implementation.
+  Depends on: <none>.
+  Completion condition: the retry cap is enforced.
+  Verification: run \`node --check scripts/fixture.mjs\`.`;
+  const objectiveSha256 = createHash('sha256').update(todo).digest('hex');
+  const workspaceCommit = 'a'.repeat(40);
+  const subject = { objectiveSha256, workspaceCommit, failureClass: 'controller_no_progress' };
+  const key = terminalFailureTrajectoryKey(subject);
+  const run = (controllerFingerprint, commit = workspaceCommit) => execFileSync(process.execPath, [
+    '--input-type=module', '-e',
+    'import { selectFirstSchedulableTodo } from "./scripts/phase-loop-todo-evaluator.mjs";'
+      + 'const [todo, options] = JSON.parse(process.argv[1]);'
+      + 'process.stdout.write(selectFirstSchedulableTodo(todo, options));',
+    JSON.stringify([todo, { blockedPath, controllerFingerprint, workspaceCommit: commit }]),
+  ], { cwd: controllerRoot, encoding: 'utf8' });
+  for (let index = 0; index < 12; index += 1) {
+    const record = {
+      block_reason: 'controller_no_progress',
+      selected_todo_sha256: objectiveSha256,
+      selected_todo_first_line: todo.split('\n')[0],
+      controller_fingerprint: `recording-controller-${index}`,
+      claim_id: `claim-${index}`,
+      retry_cap: 1,
+      retry_trajectory: { key, subject, attemptId: `attempt-${index}` },
+    };
+    fs.appendFileSync(blockedPath, JSON.stringify(record) + '\n');
+    assert.equal(run(`observing-controller-${index}`), index === 0 ? todo : '');
+  }
+  assert.equal(run('changed-workspace-controller', 'b'.repeat(40)), todo);
+});
+
 function durableCompletionRecord(todoId, claimId = `claim-${todoId}`, selectedTodo = `fixture:${todoId}`) {
   const selectedHash = createHash('sha256').update(selectedTodo).digest('hex');
   return {

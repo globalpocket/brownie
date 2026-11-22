@@ -70,3 +70,52 @@ test('separate supervisor readers retain an exhausted durable budget', (t) => {
   }
   assert.equal(spawnSync(process.execPath, [cli, blocked, 'd'.repeat(40), 'todo', todo]).status, 1);
 });
+
+test('unproven legacy history suppresses only the affected objective', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'brownie-legacy-terminal-budget-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const blocked = join(dir, 'blocked.jsonl');
+  const todo = '- [ ] fixture: update fixture.';
+  const objectiveSha256 = createHash('sha256').update(todo).digest('hex');
+  const identity = { ...subject, objectiveSha256 };
+  const cli = fileURLToPath(new URL('./phase-loop-terminal-failure-budget.mjs', import.meta.url));
+  const legacy = {
+    block_reason: 'terminal_runtime_failure', selected_todo_first_line: todo,
+    controller_fingerprint: 'old-controller', retry_cap: 5,
+  };
+  const typed = {
+    ...legacy, selected_todo_sha256: objectiveSha256, retry_cap: 0,
+    retry_trajectory: { key: terminalFailureTrajectoryKey(identity), subject: identity, attemptId: 'typed' },
+  };
+  for (const [record, baseline, selected, expected] of [
+    [legacy, subject.workspaceCommit, todo, 2],
+    [{ ...legacy, selected_todo_sha256: objectiveSha256 }, subject.workspaceCommit, todo, 2],
+    [legacy, subject.workspaceCommit, '- [ ] other: update fixture.', 1],
+    [typed, subject.workspaceCommit, todo, 2],
+    [typed, 'd'.repeat(40), todo, 1],
+  ]) {
+    writeFileSync(blocked, JSON.stringify(record) + '\n');
+    const result = spawnSync(process.execPath, [cli, blocked, baseline, 'todo', selected], { encoding: 'utf8' });
+    assert.ifError(result.error);
+    assert.equal(result.status, expected, result.stderr);
+  }
+});
+
+test('controller no-progress records keep the budget across twelve claim replacements', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'brownie-controller-no-progress-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const todo = '- [ ] fixture: make the selected change.';
+  const ledger = join(dir, 'blocked.jsonl');
+  const claim = join(dir, 'claim.json');
+  const cli = fileURLToPath(new URL('./phase-loop-terminal-failure-budget.mjs', import.meta.url));
+  const args = [cli, ledger, subject.workspaceCommit];
+  for (let index = 0; index < 12; index += 1) {
+    writeFileSync(claim, JSON.stringify({ claim_id: `claim-${index}`, selected_todo: todo, baseline_commit: subject.workspaceCommit }));
+    const record = spawnSync(process.execPath, [...args, 'record-no-progress', claim, '', `run-${index}`, 'no_progress:unchanged', '2'], { encoding: 'utf8' });
+    assert.equal(record.status, 0, record.stderr);
+    const select = spawnSync(process.execPath, [...args, 'todo', todo], { encoding: 'utf8' });
+    assert.equal(select.status, index < 2 ? 0 : 2, select.stderr);
+  }
+  const movedBaseline = spawnSync(process.execPath, [cli, ledger, 'd'.repeat(40), 'todo', todo], { encoding: 'utf8' });
+  assert.equal(movedBaseline.status, 1, movedBaseline.stderr);
+});

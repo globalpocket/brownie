@@ -50,18 +50,30 @@ export function terminalFailureBudget(records, subject, configuredCap) {
 }
 
 export function persistedTerminalFailureBudgets(records, {
-  objectiveSha256, workspaceCommit, modePackVersion, providerFailureFingerprint,
+  objectiveSha256, workspaceCommit, modePackVersion, providerFailureFingerprint, todoFirstLine,
 }) {
   const groups = new Map();
   for (const record of records) {
-    if (record.selected_todo_sha256 !== objectiveSha256 || !record.retry_trajectory) continue;
+    const historicalFirstLine = typeof record.selected_todo_first_line === 'string'
+      ? record.selected_todo_first_line.trim() : '';
+    const matchesObjective = record.selected_todo_sha256
+      ? record.selected_todo_sha256 === objectiveSha256
+      : Boolean(todoFirstLine && historicalFirstLine === todoFirstLine);
+    if (!matchesObjective) continue;
+    if (!record.retry_trajectory) {
+      if (workspaceCommit !== undefined) {
+        return [{ exhausted: true, cap: 0, reason: 'terminal_failure_legacy_provenance_missing' }];
+      }
+      continue;
+    }
     const { key, subject, attemptId } = record.retry_trajectory;
     if (subject?.objectiveSha256 !== objectiveSha256 || terminalFailureTrajectoryKey(subject) !== key) {
       throw new Error('Invalid persisted terminal failure trajectory');
     }
     if ((workspaceCommit && subject.workspaceCommit !== workspaceCommit) ||
         (modePackVersion !== undefined && subject.modePackVersion !== modePackVersion) ||
-        (providerFailureFingerprint && record.provider_failure_fingerprint !== providerFailureFingerprint)) continue;
+        (record.block_reason === 'terminal_runtime_failure' && providerFailureFingerprint &&
+          record.provider_failure_fingerprint !== providerFailureFingerprint)) continue;
     if (!groups.has(key)) groups.set(key, { subject, rows: [] });
     groups.get(key).rows.push({ trajectory: key, attemptId, retryCap: record.retry_cap });
   }
@@ -74,7 +86,7 @@ function readTerminalRecords(filename) {
     if (!line.trim()) return [];
     try {
       const record = JSON.parse(line);
-      return record?.block_reason === 'terminal_runtime_failure' ? [record] : [];
+      return ['terminal_runtime_failure', 'controller_no_progress'].includes(record?.block_reason) ? [record] : [];
     } catch {
       return [];
     }
@@ -84,6 +96,36 @@ function readTerminalRecords(filename) {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [blockedPath, workspaceCommit, mode, source, progressPath] = process.argv.slice(2);
   try {
+    if (mode === 'record-no-progress') {
+      const claim = JSON.parse(fs.readFileSync(source, 'utf8'));
+      const [runId, failureClass, capText] = process.argv.slice(7);
+      const retryCap = Number(capText);
+      if (!nonempty(claim.selected_todo) || !nonempty(claim.claim_id) ||
+          !nonempty(runId) || !/^no_progress:[a-z0-9_:-]+$/u.test(failureClass) ||
+          !/^[0-9]+$/u.test(capText)) throw new Error('Invalid no-progress attempt');
+      requireRetryCap(retryCap);
+      const subject = {
+        objectiveSha256: createHash('sha256').update(claim.selected_todo).digest('hex'),
+        workspaceCommit: claim.baseline_commit || workspaceCommit,
+        failureClass,
+        modePackVersion: claim.mode_pack_version ?? null,
+      };
+      const key = terminalFailureTrajectoryKey(subject);
+      const attemptId = createHash('sha256').update(JSON.stringify([claim.claim_id, runId])).digest('hex');
+      const record = {
+        block_reason: 'controller_no_progress', selected_todo_sha256: subject.objectiveSha256,
+        claim_id: claim.claim_id, run_stamp: runId, retry_cap: retryCap,
+        retry_trajectory: { key, subject, attemptId },
+      };
+      const fd = fs.openSync(blockedPath, 'a', 0o600);
+      try {
+        fs.appendFileSync(fd, JSON.stringify(record) + '\n');
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
+      process.exit(0);
+    }
     const claim = mode === 'claim' ? JSON.parse(fs.readFileSync(source, 'utf8')) : null;
     const todo = claim ? claim.selected_todo : source;
     let progress;
@@ -92,6 +134,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     }
     const budgets = persistedTerminalFailureBudgets(readTerminalRecords(blockedPath), {
       objectiveSha256: createHash('sha256').update(todo).digest('hex'),
+      todoFirstLine: todo.split('\n')[0].trim(),
       workspaceCommit: claim?.baseline_commit || workspaceCommit,
       modePackVersion: claim?.mode_pack_version,
       providerFailureFingerprint: progress?.progress_projection?.provider_failure_fingerprint,

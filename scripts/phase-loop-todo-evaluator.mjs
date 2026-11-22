@@ -564,10 +564,14 @@ function readBlockedClaims(blockedPath, queueFingerprint, controllerFingerprint 
       const record = JSON.parse(line);
       const recordHasController = typeof record.controller_fingerprint === 'string' && record.controller_fingerprint;
       const recordMatchesController = !controllerFingerprint || !recordHasController || record.controller_fingerprint === controllerFingerprint;
-      const terminalRuntimeFailure = record.block_reason === 'terminal_runtime_failure';
-      if (terminalRuntimeFailure && record.retry_trajectory) {
+      if (record.block_reason === 'controller_no_progress') {
         terminalFailureTrajectories.push(record);
         continue;
+      }
+      const terminalRuntimeFailure = record.block_reason === 'terminal_runtime_failure';
+      if (terminalRuntimeFailure) {
+        terminalFailureTrajectories.push(record);
+        if (record.retry_trajectory) continue;
       }
       // Hash/first-line suppression predates controller-bound blocked records.
       // Once a controller identity is present, stale generic suppression must
@@ -746,6 +750,7 @@ export function selectFirstSchedulableTodo(text, options = {}) {
     try {
       persistedBudgets = persistedTerminalFailureBudgets(blocked.terminalFailureTrajectories, {
         objectiveSha256: blockHash,
+        todoFirstLine: firstLine,
         workspaceCommit: options.workspaceCommit,
         modePackVersion: options.modePackVersion,
       });
