@@ -1037,6 +1037,9 @@ fi
 if [ "${PHASE_LOOP_TEST_REMOVE_CLAIM:-0}" = "1" ]; then
   rm -f "$PHASE_LOOP_STATE_DIR/todo-claims/current.json"
 fi
+if [ "${PHASE_LOOP_TEST_BLOCK_TERMINAL_APPEND:-0}" = "1" ]; then
+  mkdir "$PHASE_LOOP_STATE_DIR/todo-claims/blocked.jsonl"
+fi
 cat <<'JSON'
 {
   "command": "run",
@@ -2254,7 +2257,6 @@ blocked_append_failure_prompt="$(mktemp)"
 blocked_append_failure_todo="$(mktemp)"
 git -C "$blocked_append_failure_workspace" init -b main >/dev/null
 git -C "$blocked_append_failure_workspace" -c user.name=Brownie -c user.email=brownie@example.invalid commit --allow-empty -m init >/dev/null
-mkdir -p "$blocked_append_failure_state/todo-claims/blocked.jsonl"
 printf 'base prompt\n' > "$blocked_append_failure_prompt"
 printf -- '- [ ] E-blocked-append-failure: Patch only `scripts/blocked-append-failure.mjs`:\n  Route: implementation.\n  Verification: run `node --check scripts/blocked-append-failure.mjs`.\n\n- [ ] E-blocked-append-blocker: Blocker: external recovery evidence is unavailable.\n  Route: documentation.\n  Completion condition: the owner supplies the recovery evidence.\n  Verification: blocker: exact missing evidence is named before any workspace patch.\n' > "$blocked_append_failure_todo"
 set +e
@@ -2264,6 +2266,7 @@ PHASE_LOOP_TODO="$blocked_append_failure_todo" \
 BROWNIE_BIN="$fake_brownie_terminal_no_eligible" \
 PHASE_LOOP_WORKSPACE_ROOT="$blocked_append_failure_workspace" \
 PHASE_LOOP_TERMINAL_FAILURE_RETRY_CAP=1 \
+PHASE_LOOP_TEST_BLOCK_TERMINAL_APPEND=1 \
 run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 78 "$PHASE_LOOP" run-once >/dev/null
 blocked_append_failure_exit="$?"
 set -e
