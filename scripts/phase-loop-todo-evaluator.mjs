@@ -768,6 +768,13 @@ export function selectFirstSchedulableTodo(text, options = {}) {
     const terminalFailureRetryExhausted =
       (persistedBudgets.length > 0 || terminalFailureAttempts.length > 0) && !terminalFailureRetryAvailable;
     if (terminalFailureRetryExhausted) {
+      // A matching clean merge permits re-verification of an existing delivery.
+      // Exhausted attempts still bar fresh implementation and do not resolve dependencies.
+      if (options.repoRoot && findCleanMergedDeliveryCandidate({
+        repoRoot: options.repoRoot, selectedTodo: block,
+      }).valid) {
+        return block;
+      }
       dependencyBlockedIds.add(id);
       continue;
     }
