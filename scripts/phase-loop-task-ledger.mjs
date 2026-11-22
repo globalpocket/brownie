@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { readClaimSnapshot } from './phase-loop-claim-lifecycle.mjs';
 import { validateCompletionCertificate } from './phase-loop-delivery-integrity.mjs';
+import { terminalFailureTrajectoryKey } from './phase-loop-terminal-failure-budget.mjs';
 
 export const TASK_STATES = new Set(['queued', 'claimed', 'running', 'completed', 'blocked', 'replanned', 'failed']);
 const TERMINAL_STATES = new Set(['completed', 'blocked', 'replanned', 'failed']);
@@ -590,6 +591,8 @@ export function recordTerminalFailureRecovery(repoRoot, {
   queue_fingerprint = null,
   provider_failure_fingerprint = null,
   retry_cap = 0,
+  workspace_commit = null,
+  mode_pack_version = null,
   controller_fingerprint = null,
   recovery_id = null,
   claim_absent = false,
@@ -614,6 +617,26 @@ export function recordTerminalFailureRecovery(repoRoot, {
   }
   if (normalizedRetryCap === 0) {
     return { ok: false, code: 'terminal_failure_retry_cap_zero_requires_redelegation' };
+  }
+  const specHash = executionEvidence.selected_todo_sha256;
+  let retryTrajectory;
+  if (workspace_commit !== null || mode_pack_version !== null) {
+    const subject = {
+      objectiveSha256: specHash,
+      workspaceCommit: workspace_commit,
+      failureClass: provider_failure_fingerprint
+        ? `${blocked_reason}:${provider_failure_fingerprint}` : blocked_reason,
+      modePackVersion: mode_pack_version,
+    };
+    try {
+      if (typeof claim_id !== 'string' || !claim_id || typeof run_id !== 'string' || !run_id) {
+        throw new Error('Missing attempt identity');
+      }
+      const attemptId = crypto.createHash('sha256').update(JSON.stringify([claim_id, run_id])).digest('hex');
+      retryTrajectory = { key: terminalFailureTrajectoryKey(subject), subject, attemptId };
+    } catch {
+      return { ok: false, code: 'terminal_failure_trajectory_identity_invalid' };
+    }
   }
   let resolvedRecoveryId = recovery_id || crypto.createHash('sha256')
     .update(JSON.stringify({
@@ -647,7 +670,6 @@ export function recordTerminalFailureRecovery(repoRoot, {
       .slice(0, 24);
   }
   const taskId = terminalFailureRecoveryTaskId(selected_todo, resolvedRecoveryId);
-  const specHash = crypto.createHash('sha256').update(selected_todo).digest('hex');
   const targetScope = selected_todo.match(/\b(?:Patch|Create) only\b([^\n]*)/u)?.[1] ?? '';
   const targetFiles = [...targetScope.matchAll(/`([^`]+)`/gu)]
     .map((match) => match[1])
@@ -655,8 +677,14 @@ export function recordTerminalFailureRecovery(repoRoot, {
   const verificationCommands = [...selected_todo.matchAll(/^\s*Verification:\s*run\s+`([^`]+)`/gmu)]
     .map((match) => match[1]);
   const parentTodoId = selected_todo.match(/^\s*(?:Source|Parent) TODO:\s*([^\s.]+)/mu)?.[1] ?? null;
-  if (events.some((event) => event?.recovery_id === resolvedRecoveryId && event?.to_state === 'failed')) {
-    return { ok: true, code: 'duplicate_terminal_failure_recovery', task_id: taskId, recovery_id: resolvedRecoveryId };
+  const duplicate = events.find((event) => event?.recovery_id === resolvedRecoveryId && event?.to_state === 'failed');
+  if (duplicate) {
+    if (retryTrajectory && (duplicate.retry_trajectory?.key !== retryTrajectory.key
+      || duplicate.retry_trajectory?.attemptId !== retryTrajectory.attemptId
+      || duplicate.retry_cap !== normalizedRetryCap)) {
+      return { ok: false, code: 'terminal_failure_trajectory_replay_mismatch' };
+    }
+    return { ok: true, code: 'duplicate_terminal_failure_recovery', task_id: taskId, recovery_id: resolvedRecoveryId, event: duplicate };
   }
   const projected = taskProjection(events);
   const current = projected.get(taskId);
@@ -678,6 +706,7 @@ export function recordTerminalFailureRecovery(repoRoot, {
     queue_fingerprint,
     provider_failure_fingerprint,
     retry_cap: normalizedRetryCap,
+    ...(retryTrajectory && { retry_trajectory: retryTrajectory }),
     controller_fingerprint,
     claim_absent: Boolean(claim_absent),
     terminal_failure: true,
@@ -1350,6 +1379,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(im
     queue_fingerprint: args.get('queue-fingerprint') || null,
     provider_failure_fingerprint: args.get('provider-failure-fingerprint') || null,
     retry_cap: args.get('retry-cap') || 0,
+    workspace_commit: args.get('workspace-commit') || null,
+    mode_pack_version: args.get('mode-pack-version') || null,
     controller_fingerprint: args.get('controller-fingerprint') || null,
     execution_evidence: args.get('execution-evidence') || null,
     recovery_id: args.get('recovery-id') || null,

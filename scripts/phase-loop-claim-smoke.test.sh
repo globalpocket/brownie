@@ -5966,6 +5966,7 @@ cp "$REPO_ROOT/scripts/phase-loop-todo-state.mjs" "$release_ops_workspace/script
 cp "$REPO_ROOT/scripts/phase-loop-delivery-integrity.mjs" "$release_ops_workspace/scripts/phase-loop-delivery-integrity.mjs"
 cp "$REPO_ROOT/scripts/phase-loop-historical-derived-delivery-integrity.mjs" "$release_ops_workspace/scripts/phase-loop-historical-derived-delivery-integrity.mjs"
 cp "$REPO_ROOT/scripts/phase-loop-todo-evaluator.mjs" "$release_ops_workspace/scripts/phase-loop-todo-evaluator.mjs"
+cp "$REPO_ROOT/scripts/phase-loop-terminal-failure-budget.mjs" "$release_ops_workspace/scripts/phase-loop-terminal-failure-budget.mjs"
 cp "$REPO_ROOT/scripts/phase-loop-release-ops-blocker.mjs" "$release_ops_workspace/scripts/phase-loop-release-ops-blocker.mjs"
 printf '{"scripts":{}}\n' > "$release_ops_workspace/package.json"
 printf '{"product_ready":false}\n' > "$release_ops_workspace/docs/architecture/phase-value-manifest.json"

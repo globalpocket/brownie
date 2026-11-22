@@ -14,6 +14,7 @@ import {
 } from './phase-loop-todo-state.mjs';
 import { boundedScopes as boundedScopesFromFirstLine } from './phase-loop-bounded-scope.mjs';
 import { findCleanMergedDeliveryCandidate } from './phase-loop-delivery-integrity.mjs';
+import { persistedTerminalFailureBudgets } from './phase-loop-terminal-failure-budget.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -542,6 +543,7 @@ function readBlockedClaims(blockedPath, queueFingerprint, controllerFingerprint 
       stableIds: new Set(),
       stablePrefixes: new Set(),
       stableScopeContracts: new Set(),
+      terminalFailureTrajectories: [],
       terminalFailureAttempts: new Map()
     };
   }
@@ -553,6 +555,7 @@ function readBlockedClaims(blockedPath, queueFingerprint, controllerFingerprint 
   const stablePrefixes = new Set();
   const stableScopeContracts = new Set();
   const terminalFailureAttempts = new Map();
+  const terminalFailureTrajectories = [];
   for (const line of fs.readFileSync(blockedPath, 'utf8').split('\n')) {
     if (!line.trim()) {
       continue;
@@ -562,6 +565,10 @@ function readBlockedClaims(blockedPath, queueFingerprint, controllerFingerprint 
       const recordHasController = typeof record.controller_fingerprint === 'string' && record.controller_fingerprint;
       const recordMatchesController = !controllerFingerprint || !recordHasController || record.controller_fingerprint === controllerFingerprint;
       const terminalRuntimeFailure = record.block_reason === 'terminal_runtime_failure';
+      if (terminalRuntimeFailure && record.retry_trajectory) {
+        terminalFailureTrajectories.push(record);
+        continue;
+      }
       // Hash/first-line suppression predates controller-bound blocked records.
       // Once a controller identity is present, stale generic suppression must
       // not survive a controller rebaseline, especially for generated leaves.
@@ -647,7 +654,7 @@ function readBlockedClaims(blockedPath, queueFingerprint, controllerFingerprint 
       // Ignore corrupt historical blocked entries; the phase-loop guard remains fail-closed elsewhere.
     }
   }
-  return { hashes, firstLines, currentControllerHashes, currentControllerFirstLines, stableIds, stablePrefixes, stableScopeContracts, terminalFailureAttempts };
+  return { hashes, firstLines, currentControllerHashes, currentControllerFirstLines, stableIds, stablePrefixes, stableScopeContracts, terminalFailureAttempts, terminalFailureTrajectories };
 }
 
 export function selectFirstSchedulableTodo(text, options = {}) {
@@ -735,12 +742,26 @@ export function selectFirstSchedulableTodo(text, options = {}) {
       continue;
     }
     const firstLine = block.split('\n')[0]?.trim() ?? '';
+    let persistedBudgets;
+    try {
+      persistedBudgets = persistedTerminalFailureBudgets(blocked.terminalFailureTrajectories, {
+        objectiveSha256: blockHash,
+        workspaceCommit: options.workspaceCommit,
+        modePackVersion: options.modePackVersion,
+      });
+    } catch {
+      dependencyBlockedIds.add(id);
+      continue;
+    }
     const terminalFailureAttempts = [...blocked.terminalFailureAttempts.values()].filter((entry) => (
       (entry.todo_hash === blockHash || entry.todo_first_line === firstLine)
       && (!options.controllerFingerprint || entry.controller_fingerprint === options.controllerFingerprint)
     ));
-    const terminalFailureRetryAvailable = terminalFailureAttempts.some((entry) => entry.count <= entry.retry_cap);
-    const terminalFailureRetryExhausted = terminalFailureAttempts.length > 0 && !terminalFailureRetryAvailable;
+    const terminalFailureRetryAvailable = persistedBudgets.length
+      ? persistedBudgets.every((budget) => !budget.exhausted)
+      : terminalFailureAttempts.some((entry) => entry.count <= entry.retry_cap);
+    const terminalFailureRetryExhausted =
+      (persistedBudgets.length > 0 || terminalFailureAttempts.length > 0) && !terminalFailureRetryAvailable;
     if (terminalFailureRetryExhausted) {
       dependencyBlockedIds.add(id);
       continue;
@@ -830,6 +851,9 @@ function parseArgs(argv) {
     } else if (key === '--controller-fingerprint') {
       args.controllerFingerprint = value;
       index += 1;
+    } else if (key === '--workspace-commit') {
+      args.workspaceCommit = value;
+      index += 1;
     } else if (key === '--exclude-todo-sha256') {
       args.excludedTodoHashes.push(value);
       index += 1;
@@ -859,6 +883,7 @@ if (isMainModule()) {
     blockedPath: args.blocked,
     claimDir: args.claimDir,
     controllerFingerprint: args.controllerFingerprint,
+    workspaceCommit: args.workspaceCommit,
     excludedTodoHashes: args.excludedTodoHashes
   });
   if (args.mode === 'score' || args.mode === 'needs-decomposition' || args.json) {

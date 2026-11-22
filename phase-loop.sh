@@ -1173,6 +1173,7 @@ todo_first_pending_item() {
       --blocked "$TODO_BLOCKED_FILE"
       --claim-dir "$TODO_CLAIM_DIR"
       --controller-fingerprint "$(phase_loop_controller_fingerprint)"
+      --workspace-commit "$(git -C "$PHASE_LOOP_WORKSPACE_ROOT" rev-parse HEAD 2>/dev/null || true)"
     )
     local suppressed_hash
     for suppressed_hash in "${suppressed_todo_hashes[@]-}"; do
@@ -2612,6 +2613,7 @@ record_terminal_failure_todo_claim() {
   local run_stamp="$1"
   local progress_file="$2"
   local context selected_todo claim_id queue_generation queue_fingerprint provider_failure_fingerprint claim_absent recovery_output recovery_status recovery_id controller_fingerprint retry_cap execution_evidence
+  local workspace_commit mode_pack_version retry_trajectory
   if ! validate_terminal_failure_retry_cap; then
     PHASE_LOOP_TASK_LEDGER_FAILURE=1
     PHASE_LOOP_TASK_LEDGER_FAILURE_DETAIL="Invalid terminal failure retry cap before durable recovery recording: ${PHASE_LOOP_TERMINAL_FAILURE_RETRY_CAP_VALIDATION_DETAIL:-unknown validation failure}"
@@ -2672,6 +2674,8 @@ print(json.dumps({
     "queue_generation": claim.get("queue_generation") or projection.get("queue_generation") or queue_state.get("generation"),
     "queue_fingerprint": str(claim.get("queue_fingerprint") or projection.get("queue_fingerprint") or queue_state.get("fingerprint") or ""),
     "provider_failure_fingerprint": str(projection.get("provider_failure_fingerprint") or ""),
+    "workspace_commit": str(claim.get("baseline_commit") or ""),
+    "mode_pack_version": str(claim.get("mode_pack_version") or ""),
     "claim_absent": claim_absent,
 }, ensure_ascii=False, sort_keys=True))
 PY
@@ -2685,6 +2689,8 @@ PY
   queue_generation="$(printf '%s' "$context" | python3 -c 'import json,sys; print(json.load(sys.stdin)["queue_generation"] or "")')"
   queue_fingerprint="$(printf '%s' "$context" | python3 -c 'import json,sys; print(json.load(sys.stdin)["queue_fingerprint"])')"
   provider_failure_fingerprint="$(printf '%s' "$context" | python3 -c 'import json,sys; print(json.load(sys.stdin)["provider_failure_fingerprint"])')"
+  workspace_commit="$(printf '%s' "$context" | python3 -c 'import json,sys; print(json.load(sys.stdin)["workspace_commit"])')"
+  mode_pack_version="$(printf '%s' "$context" | python3 -c 'import json,sys; print(json.load(sys.stdin)["mode_pack_version"])')"
   claim_absent="$(printf '%s' "$context" | python3 -c 'import json,sys; print("true" if json.load(sys.stdin)["claim_absent"] else "false")')"
   if [ -z "$claim_id" ]; then
     PHASE_LOOP_TASK_LEDGER_FAILURE=1
@@ -2705,6 +2711,8 @@ PY
         --queue-generation "$queue_generation" \
         --queue-fingerprint "$queue_fingerprint" \
         --provider-failure-fingerprint "$provider_failure_fingerprint" \
+        --workspace-commit "$workspace_commit" \
+        --mode-pack-version "$mode_pack_version" \
         --retry-cap "$retry_cap" \
         --controller-fingerprint "$controller_fingerprint" \
         --execution-evidence "$execution_evidence" \
@@ -2757,7 +2765,8 @@ except Exception: print("")' 2>/dev/null || true)"
     return 78
   fi
   local blocked_record_status
-  if python3 - "$TODO_BLOCKED_FILE" "$selected_todo" "$claim_id" "$queue_generation" "$queue_fingerprint" "$provider_failure_fingerprint" "$recovery_id" "$run_stamp" "$retry_cap" "$claim_absent" "$(phase_loop_controller_fingerprint)" <<'PY'
+  retry_trajectory="$(printf '%s' "$recovery_output" | python3 -c 'import json,sys; print(json.dumps((json.load(sys.stdin).get("event") or {}).get("retry_trajectory")))')"
+  if python3 - "$TODO_BLOCKED_FILE" "$selected_todo" "$claim_id" "$queue_generation" "$queue_fingerprint" "$provider_failure_fingerprint" "$recovery_id" "$run_stamp" "$retry_cap" "$claim_absent" "$controller_fingerprint" "$retry_trajectory" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -2784,6 +2793,9 @@ record = {
     "claim_absent": sys.argv[10] == "true",
     "controller_fingerprint": sys.argv[11],
 }
+retry_trajectory = json.loads(sys.argv[12])
+if retry_trajectory is not None:
+    record["retry_trajectory"] = retry_trajectory
 blocked_path.parent.mkdir(parents=True, exist_ok=True)
 existing = []
 if blocked_path.exists():
@@ -2955,9 +2967,24 @@ record_invalid_decomposition_leaf_claim() {
   write_status "blocked_todo_recorded" "$detail" "invalid-leaf-$run_stamp" "0" "${CONSECUTIVE_FAILURES:-0}"
 }
 
+terminal_failure_trajectory_retry_state() {
+  local workspace_commit result=0
+  workspace_commit="$(git -C "$PHASE_LOOP_WORKSPACE_ROOT" rev-parse HEAD 2>/dev/null || true)"
+  node "$ROOT_DIR/scripts/phase-loop-terminal-failure-budget.mjs" "$TODO_BLOCKED_FILE" "$workspace_commit" "$@" || result=$?
+  case "$result" in
+    0|1|2) return "$result" ;;
+    *) return 2 ;;
+  esac
+}
+
 terminal_failure_retry_state_for_claim() {
   if [ ! -f "$TODO_CLAIM_FILE" ] || [ ! -f "$TODO_BLOCKED_FILE" ]; then
     return 1
+  fi
+  local trajectory_status=0
+  terminal_failure_trajectory_retry_state claim "$TODO_CLAIM_FILE" "$PROGRESS_STATE_FILE" || trajectory_status=$?
+  if [ "$trajectory_status" -ne 1 ]; then
+    return "$trajectory_status"
   fi
   python3 - "$TODO_CLAIM_FILE" "$TODO_BLOCKED_FILE" "$PROGRESS_STATE_FILE" "$(phase_loop_controller_fingerprint)" <<'PY'
 import hashlib
@@ -2997,6 +3024,8 @@ for line in blocked_path.read_text(encoding="utf-8").splitlines():
         continue
     if record.get("block_reason") != "terminal_runtime_failure":
         continue
+    if record.get("retry_trajectory"):
+        continue
     if record.get("controller_fingerprint") != controller:
         continue
     if provider_failure_fingerprint and str(record.get("provider_failure_fingerprint") or "") != provider_failure_fingerprint:
@@ -3024,6 +3053,11 @@ terminal_failure_retry_state_for_todo() {
   if [ ! -f "$TODO_BLOCKED_FILE" ]; then
     return 1
   fi
+  local trajectory_status=0
+  terminal_failure_trajectory_retry_state todo "$selected_todo" || trajectory_status=$?
+  if [ "$trajectory_status" -ne 1 ]; then
+    return "$trajectory_status"
+  fi
   python3 - "$TODO_BLOCKED_FILE" "$selected_todo" "$(phase_loop_controller_fingerprint)" <<'PY'
 import hashlib
 import json
@@ -3045,6 +3079,8 @@ for line in blocked_path.read_text(encoding="utf-8").splitlines():
     except Exception:
         continue
     if record.get("block_reason") != "terminal_runtime_failure":
+        continue
+    if record.get("retry_trajectory"):
         continue
     if record.get("controller_fingerprint") != controller:
         continue
