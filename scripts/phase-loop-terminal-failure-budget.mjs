@@ -81,15 +81,26 @@ export function persistedTerminalFailureBudgets(records, {
     terminalFailureBudget(rows, subject, Number.MAX_SAFE_INTEGER));
 }
 
-function readTerminalRecords(filename) {
-  return fs.readFileSync(filename, 'utf8').split('\n').flatMap((line) => {
+export function readBlockedClaimRecords(filename) {
+  let text;
+  try {
+    text = fs.readFileSync(filename, 'utf8');
+  } catch (error) {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  }
+  return text.split('\n').flatMap((line, index) => {
     if (!line.trim()) return [];
+    let record;
     try {
-      const record = JSON.parse(line);
-      return ['terminal_runtime_failure', 'controller_no_progress'].includes(record?.block_reason) ? [record] : [];
+      record = JSON.parse(line);
     } catch {
-      return [];
+      throw new Error(`Malformed blocked claim ledger at line ${index + 1}`);
     }
+    if (!record || typeof record !== 'object' || Array.isArray(record)) {
+      throw new Error(`Invalid blocked claim ledger record at line ${index + 1}`);
+    }
+    return [record];
   });
 }
 
@@ -132,7 +143,9 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     if (progressPath && fs.existsSync(progressPath)) {
       progress = JSON.parse(fs.readFileSync(progressPath, 'utf8'));
     }
-    const budgets = persistedTerminalFailureBudgets(readTerminalRecords(blockedPath), {
+    const records = readBlockedClaimRecords(blockedPath).filter(record =>
+      ['terminal_runtime_failure', 'controller_no_progress'].includes(record.block_reason));
+    const budgets = persistedTerminalFailureBudgets(records, {
       objectiveSha256: createHash('sha256').update(todo).digest('hex'),
       todoFirstLine: todo.split('\n')[0].trim(),
       workspaceCommit: claim?.baseline_commit || workspaceCommit,

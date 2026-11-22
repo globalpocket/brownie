@@ -119,3 +119,20 @@ test('controller no-progress records keep the budget across twelve claim replace
   const movedBaseline = spawnSync(process.execPath, [cli, ledger, 'd'.repeat(40), 'todo', todo], { encoding: 'utf8' });
   assert.equal(movedBaseline.status, 1, movedBaseline.stderr);
 });
+
+test('a torn budget record cannot reopen an exhausted trajectory', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'brownie-torn-budget-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const ledger = join(dir, 'blocked.jsonl');
+  const claim = join(dir, 'claim.json');
+  const todo = '- [ ] fixture: make the selected change.';
+  const cli = fileURLToPath(new URL('./phase-loop-terminal-failure-budget.mjs', import.meta.url));
+  const run = (...args) => spawnSync(process.execPath, [cli, ledger, subject.workspaceCommit, ...args], { encoding: 'utf8' });
+  writeFileSync(claim, JSON.stringify({ claim_id: 'fixture', selected_todo: todo, baseline_commit: subject.workspaceCommit }));
+  assert.equal(run('record-no-progress', claim, '', 'run', 'no_progress:unchanged', '0').status, 0);
+  assert.equal(run('todo', todo).status, 2);
+  writeFileSync(ledger, '{"block_reason":"controller_no_progress"');
+  const retry = run('todo', todo);
+  assert.equal(retry.status, 2);
+  assert.match(retry.stderr, /Malformed blocked claim ledger at line 1/u);
+});

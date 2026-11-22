@@ -17,6 +17,16 @@ import {
 
 const controllerRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+test('queue selection refuses a torn blocked claim ledger', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-torn-queue-ledger-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const blockedPath = path.join(dir, 'blocked.jsonl');
+  const todo = '- [ ] fixture: Patch only `notes.txt`.';
+  fs.writeFileSync(blockedPath, '{"block_reason":"controller_no_progress"');
+  assert.throws(() => selectFirstSchedulableTodo(todo, { blockedPath }),
+    /Malformed blocked claim ledger at line 1/u);
+});
+
 test('fresh queue evaluators never reopen an exhausted typed terminal trajectory', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-queued-trajectory-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -713,8 +723,8 @@ test('retries a stalled TODO after the controller fingerprint changes', () => {
   fs.writeFileSync(blocked, `${JSON.stringify({
     block_reason: 'stalled_leaf_contract_replan',
     controller_fingerprint: 'old-controller',
-    selected_todo_first_line: stalled.split('\\n')[0]
-  })}\\n`);
+    selected_todo_first_line: stalled.split('\n')[0]
+  })}\n`);
 
   const selected = selectFirstSchedulableTodo(stalled, {
     blockedPath: blocked,

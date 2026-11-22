@@ -14,7 +14,7 @@ import {
 } from './phase-loop-todo-state.mjs';
 import { boundedScopes as boundedScopesFromFirstLine } from './phase-loop-bounded-scope.mjs';
 import { findCleanMergedDeliveryCandidate } from './phase-loop-delivery-integrity.mjs';
-import { persistedTerminalFailureBudgets } from './phase-loop-terminal-failure-budget.mjs';
+import { persistedTerminalFailureBudgets, readBlockedClaimRecords } from './phase-loop-terminal-failure-budget.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -534,7 +534,7 @@ export function needsTodoDecomposition(block) {
 }
 
 function readBlockedClaims(blockedPath, queueFingerprint, controllerFingerprint = '') {
-  if (!blockedPath || !fs.existsSync(blockedPath) || !fs.statSync(blockedPath).isFile()) {
+  if (!blockedPath) {
     return {
       hashes: new Set(),
       firstLines: new Set(),
@@ -556,12 +556,8 @@ function readBlockedClaims(blockedPath, queueFingerprint, controllerFingerprint 
   const stableScopeContracts = new Set();
   const terminalFailureAttempts = new Map();
   const terminalFailureTrajectories = [];
-  for (const line of fs.readFileSync(blockedPath, 'utf8').split('\n')) {
-    if (!line.trim()) {
-      continue;
-    }
+  for (const record of readBlockedClaimRecords(blockedPath)) {
     try {
-      const record = JSON.parse(line);
       const recordHasController = typeof record.controller_fingerprint === 'string' && record.controller_fingerprint;
       const recordMatchesController = !controllerFingerprint || !recordHasController || record.controller_fingerprint === controllerFingerprint;
       if (record.block_reason === 'controller_no_progress') {
@@ -655,7 +651,7 @@ function readBlockedClaims(blockedPath, queueFingerprint, controllerFingerprint 
         }
       }
     } catch {
-      // Ignore corrupt historical blocked entries; the phase-loop guard remains fail-closed elsewhere.
+      // Preserve existing handling of optional historical metadata fields.
     }
   }
   return { hashes, firstLines, currentControllerHashes, currentControllerFirstLines, stableIds, stablePrefixes, stableScopeContracts, terminalFailureAttempts, terminalFailureTrajectories };
