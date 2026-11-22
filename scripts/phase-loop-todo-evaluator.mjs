@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   scoreTodoDecompositionText,
@@ -814,6 +815,14 @@ export function selectFirstSchedulableTodo(text, options = {}) {
 }
 
 export function evaluateTodoQueue(text, options = {}) {
+  let workspaceCommit = options.workspaceCommit;
+  if (workspaceCommit === undefined && options.repoRoot) {
+    const head = spawnSync('git', ['rev-parse', '--verify', 'HEAD'], {
+      cwd: options.repoRoot, encoding: 'utf8', timeout: 5000,
+    });
+    const commit = head.stdout?.trim();
+    if (head.status === 0 && /^[a-f0-9]{40}$/u.test(commit ?? '')) workspaceCommit = commit;
+  }
   const todoState = options.todoState ?? (
     options.repoRoot
       ? loadTodoState(options.repoRoot, text, {
@@ -826,7 +835,7 @@ export function evaluateTodoQueue(text, options = {}) {
           completionRecords: options.todoCompletionRecords
         })
   );
-  const selected = selectFirstSchedulableTodo(text, { ...options, todoState });
+  const selected = selectFirstSchedulableTodo(text, { ...options, todoState, workspaceCommit });
   const decomposition = needsTodoDecomposition(selected);
   return {
     schema_version: 1,

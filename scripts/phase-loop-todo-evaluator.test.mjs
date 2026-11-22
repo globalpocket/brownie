@@ -17,6 +17,30 @@ import {
 
 const controllerRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+test('queue evaluation uses the workspace HEAD when no baseline is supplied', (t) => {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-queue-baseline-'));
+  t.after(() => fs.rmSync(repoRoot, { recursive: true, force: true }));
+  const git = (...args) => execFileSync('git', ['-c', 'user.name=Fixture', '-c',
+    'user.email=fixture@example.test', '-c', 'commit.gpgsign=false', ...args],
+  { cwd: repoRoot, encoding: 'utf8' }).trim();
+  git('init', '--quiet');
+  git('commit', '--quiet', '--allow-empty', '-m', 'failed baseline');
+  const todo = '- [ ] fixture-baseline: Patch only `scripts/fixture.mjs`.';
+  const objectiveSha256 = createHash('sha256').update(todo).digest('hex');
+  const subject = { objectiveSha256, workspaceCommit: git('rev-parse', 'HEAD'),
+    failureClass: 'controller_no_progress' };
+  const blockedPath = path.join(repoRoot, 'blocked.jsonl');
+  fs.writeFileSync(blockedPath, JSON.stringify({ block_reason: 'controller_no_progress',
+    selected_todo_sha256: objectiveSha256, retry_cap: 0,
+    retry_trajectory: { key: terminalFailureTrajectoryKey(subject), subject, attemptId: 'attempt-1' }
+  }) + '\n');
+  const select = (options = {}) => evaluateTodoQueue(todo, { repoRoot, blockedPath, ...options }).selected_todo_id;
+  assert.equal(select(), null);
+  git('commit', '--quiet', '--allow-empty', '-m', 'new baseline');
+  assert.equal(select(), 'fixture-baseline');
+  assert.equal(select({ workspaceCommit: subject.workspaceCommit }), null);
+});
+
 test('queue selection refuses a torn blocked claim ledger', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-torn-queue-ledger-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
