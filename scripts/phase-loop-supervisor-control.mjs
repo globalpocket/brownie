@@ -1422,7 +1422,7 @@ function appendStalledTodoBlockedRecord(repoRoot, diagnostic, ledgerSummary) {
     verification_command: selectedVerification || null
   };
   fs.mkdirSync(path.dirname(blockedPath), { recursive: true, mode: 0o700 });
-  fs.appendFileSync(blockedPath, `${JSON.stringify(record, Object.keys(record).sort())}\n`, { encoding: 'utf8', mode: 0o600 });
+  fs.appendFileSync(blockedPath, `${JSON.stringify(record)}\n`, { encoding: 'utf8', mode: 0o600 });
   fsyncFileAndParent(blockedPath);
   return {
     attempted: true,
@@ -1987,7 +1987,7 @@ function maybeRecoverTerminalStalledReplan(repoRoot, diagnostic) {
     record?.block_reason === 'stalled_leaf_contract_replan' &&
     (record?.todo_id === sourceId || todoIdFromFirstLine(record?.selected_todo_first_line) === sourceId)
   ));
-  fs.writeFileSync(blockedPath, retainedBlocked.map((record) => `${JSON.stringify(record, Object.keys(record).sort())}\n`).join(''), { encoding: 'utf8', mode: 0o600 });
+  fs.writeFileSync(blockedPath, retainedBlocked.map((record) => `${JSON.stringify(record)}\n`).join(''), { encoding: 'utf8', mode: 0o600 });
   fsyncFileAndParent(blockedPath);
   // The selected replan is being removed from the queue.  Retain its claim as
   // an audit record, but never let it survive as current: a later claim pass
@@ -2142,7 +2142,7 @@ function maybeRepairRejectedBoundedLeafReplanResidue(repoRoot, diagnostic) {
   if (removedBlockedRecordCount > 0) {
     fs.writeFileSync(
       blockedPath,
-      retainedBlockedRecords.map((record) => `${JSON.stringify(record, Object.keys(record).sort())}\n`).join(''),
+      retainedBlockedRecords.map((record) => `${JSON.stringify(record)}\n`).join(''),
       { encoding: 'utf8', mode: 0o600 }
     );
     fsyncFileAndParent(blockedPath);
