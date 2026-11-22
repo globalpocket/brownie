@@ -203,7 +203,7 @@
       "lockfiles": [
         {
           "path": "Cargo.lock",
-          "sha256": "sha256:a9fe53cd15d2c95d8715785ca401481f388ab092c08b2101765955e306f401ff"
+          "sha256": "sha256:3b0e9dda43f28d418ed8ecdda1eeb6244ed8a46fe5c0f92187ea26057d567656"
         },
         {
           "path": "pnpm-lock.yaml",
@@ -254,8 +254,8 @@
       "status": "satisfied",
       "release_blocking": true,
       "path": ".brownie/release-evidence/brownie-runtime-sbom.json",
-      "sha256": "sha256:8c41fd4624aeba28d531ef3147edc7f6d76831a5464b125ccae123f6daf45973",
-      "component_count": 220
+      "sha256": "sha256:5d02b7bcbe7858cf4a161492f3bb943949995617c283e2d438a552c33645d2f9",
+      "component_count": 210
     },
     "artifacts": {
       "status": "partial_source_identity_missing",
@@ -932,11 +932,11 @@
       "status": "satisfied",
       "release_blocking": true,
       "path": ".brownie/release-evidence/SHA256SUMS",
-      "sha256": "sha256:3cdecf507ff20c8c63f33627811634f25415d681194d04b052fb8d21086d46c3",
+      "sha256": "sha256:806c997ba9362b9cfaeeb8b611c99c83e652516d0b5379451b2dca96e8cae46c",
       "entries": [
         {
           "path": ".brownie/release-evidence/brownie-runtime-sbom.json",
-          "sha256": "sha256:8c41fd4624aeba28d531ef3147edc7f6d76831a5464b125ccae123f6daf45973"
+          "sha256": "sha256:5d02b7bcbe7858cf4a161492f3bb943949995617c283e2d438a552c33645d2f9"
         },
         {
           "path": ".brownie/release-evidence/brownie-runtime-provenance.json",

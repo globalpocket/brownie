@@ -1,9 +1,9 @@
 {
   "bomFormat": "BrownieReleaseEvidence",
   "specVersion": "1.0",
-  "serialNumber": "urn:uuid:4933b12e-d081-413a-8eb2-51b8d5a673b9",
+  "serialNumber": "urn:uuid:c8a5eebf-69d8-428e-a11f-092255183c1b",
   "metadata": {
-    "generated_at": "2026-11-09T15:33:08.581Z",
+    "generated_at": "2026-11-22T10:13:43.697Z",
     "component": {
       "type": "application",
       "name": "brownie-runtime",
@@ -304,7 +304,7 @@
     {
       "ecosystem": "cargo",
       "name": "form_urlencoded",
-      "version": "1.2.2",
+      "version": "1.2.3",
       "source": "registry+https://github.com/rust-lang/crates.io-index"
     },
     {
@@ -610,13 +610,13 @@
     {
       "ecosystem": "cargo",
       "name": "quinn-proto",
-      "version": "0.11.18",
+      "version": "0.11.19",
       "source": "registry+https://github.com/rust-lang/crates.io-index"
     },
     {
       "ecosystem": "cargo",
       "name": "quinn-udp",
-      "version": "0.5.14",
+      "version": "0.5.16",
       "source": "registry+https://github.com/rust-lang/crates.io-index"
     },
     {
@@ -1006,7 +1006,7 @@
     {
       "ecosystem": "cargo",
       "name": "url",
-      "version": "2.5.8",
+      "version": "2.5.9",
       "source": "registry+https://github.com/rust-lang/crates.io-index"
     },
     {
@@ -1132,12 +1132,6 @@
     {
       "ecosystem": "cargo",
       "name": "windows-sys",
-      "version": "0.60.2",
-      "source": "registry+https://github.com/rust-lang/crates.io-index"
-    },
-    {
-      "ecosystem": "cargo",
-      "name": "windows-sys",
       "version": "0.61.2",
       "source": "registry+https://github.com/rust-lang/crates.io-index"
     },
@@ -1149,20 +1143,8 @@
     },
     {
       "ecosystem": "cargo",
-      "name": "windows-targets",
-      "version": "0.53.5",
-      "source": "registry+https://github.com/rust-lang/crates.io-index"
-    },
-    {
-      "ecosystem": "cargo",
       "name": "windows_aarch64_gnullvm",
       "version": "0.52.6",
-      "source": "registry+https://github.com/rust-lang/crates.io-index"
-    },
-    {
-      "ecosystem": "cargo",
-      "name": "windows_aarch64_gnullvm",
-      "version": "0.53.1",
       "source": "registry+https://github.com/rust-lang/crates.io-index"
     },
     {
@@ -1173,20 +1155,8 @@
     },
     {
       "ecosystem": "cargo",
-      "name": "windows_aarch64_msvc",
-      "version": "0.53.1",
-      "source": "registry+https://github.com/rust-lang/crates.io-index"
-    },
-    {
-      "ecosystem": "cargo",
       "name": "windows_i686_gnu",
       "version": "0.52.6",
-      "source": "registry+https://github.com/rust-lang/crates.io-index"
-    },
-    {
-      "ecosystem": "cargo",
-      "name": "windows_i686_gnu",
-      "version": "0.53.1",
       "source": "registry+https://github.com/rust-lang/crates.io-index"
     },
     {
@@ -1197,20 +1167,8 @@
     },
     {
       "ecosystem": "cargo",
-      "name": "windows_i686_gnullvm",
-      "version": "0.53.1",
-      "source": "registry+https://github.com/rust-lang/crates.io-index"
-    },
-    {
-      "ecosystem": "cargo",
       "name": "windows_i686_msvc",
       "version": "0.52.6",
-      "source": "registry+https://github.com/rust-lang/crates.io-index"
-    },
-    {
-      "ecosystem": "cargo",
-      "name": "windows_i686_msvc",
-      "version": "0.53.1",
       "source": "registry+https://github.com/rust-lang/crates.io-index"
     },
     {
@@ -1221,32 +1179,14 @@
     },
     {
       "ecosystem": "cargo",
-      "name": "windows_x86_64_gnu",
-      "version": "0.53.1",
-      "source": "registry+https://github.com/rust-lang/crates.io-index"
-    },
-    {
-      "ecosystem": "cargo",
       "name": "windows_x86_64_gnullvm",
       "version": "0.52.6",
       "source": "registry+https://github.com/rust-lang/crates.io-index"
     },
     {
       "ecosystem": "cargo",
-      "name": "windows_x86_64_gnullvm",
-      "version": "0.53.1",
-      "source": "registry+https://github.com/rust-lang/crates.io-index"
-    },
-    {
-      "ecosystem": "cargo",
       "name": "windows_x86_64_msvc",
       "version": "0.52.6",
-      "source": "registry+https://github.com/rust-lang/crates.io-index"
-    },
-    {
-      "ecosystem": "cargo",
-      "name": "windows_x86_64_msvc",
-      "version": "0.53.1",
       "source": "registry+https://github.com/rust-lang/crates.io-index"
     },
     {
