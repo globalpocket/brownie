@@ -8,8 +8,14 @@ on:
 
 jobs:
   check:
+    needs: runtime-platform
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
+      - name: Require Runtime platform checks
+        if: ${{ always() && needs.runtime-platform.result != 'success' }}
+        run: exit 1
+
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
