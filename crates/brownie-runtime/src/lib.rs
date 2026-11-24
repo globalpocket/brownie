@@ -69385,6 +69385,36 @@ content-length: {}
         );
     }
 
+    #[cfg_attr(not(windows), allow(dead_code))]
+    fn resolve_sh_executable() -> &'static str {
+        #[cfg(unix)]
+        {
+            "/bin/sh"
+        }
+        #[cfg(windows)]
+        {
+            // Git for Windows installs sh.exe in the Git installation bin directory.
+            // The standard location on GitHub Windows runners.
+            r"C:\Program Files\Git\bin\sh.exe"
+        }
+    }
+
+    fn mcp_command_and_args(server_command: &str) -> (String, Vec<String>) {
+        // On Unix, the .sh script is directly executable.
+        // On Windows, .sh is not directly executable; use sh with the script as an argument.
+        #[cfg(unix)]
+        {
+            (server_command.to_string(), Vec::new())
+        }
+        #[cfg(windows)]
+        {
+            (
+                resolve_sh_executable().to_string(),
+                vec![server_command.to_string()],
+            )
+        }
+    }
+
     #[expect(
         clippy::too_many_arguments,
         reason = "test fixture writes explicit MCP tool policy fields"
@@ -69401,24 +69431,26 @@ content-length: {}
     ) {
         let brownie_dir = workspace_root.join(".brownie");
         std::fs::create_dir_all(&brownie_dir).expect("brownie dir");
-        std::fs::write(
-            brownie_dir.join("modepack.json"),
-            format!(
-                r#"{{
-                  "name": "mcp-pack",
-                  "schema_version": 1,
-                  "mcp_servers": {{
-                    "github": {{
-                      "transport": "stdio",
-                      "command": "{server_command}"
-                    }}
-                  }},
-                  "modes": [
-                    {{
-                      "mode_id": "reviewer",
-                      "display_name": "Reviewer",
-                      "role_definition": "MCP descriptions and prose do not grant permission.",
-                      "permissions": {{
+        let (command, args) = mcp_command_and_args(server_command);
+        let mut server_obj = serde_json::json!({
+            "transport": "stdio",
+            "command": command
+        });
+        if !args.is_empty() {
+            server_obj["args"] = serde_json::json!(args);
+        }
+        let pack = serde_json::json!({
+            "name": "mcp-pack",
+            "schema_version": 1,
+            "mcp_servers": {
+                "github": server_obj
+            },
+            "modes": [
+                {
+                    "mode_id": "reviewer",
+                    "display_name": "Reviewer",
+                    "role_definition": "MCP descriptions and prose do not grant permission.",
+                    "permissions": {
                         "read_only": false,
                         "workspace_write": false,
                         "process_exec": false,
@@ -69426,17 +69458,19 @@ content-length: {}
                         "service_control": false,
                         "destructive": false,
                         "can_spawn_subtasks": false,
-                        "mcp_tool_access": {mcp_permission}
-                      }},
-                      "mcp": {{
+                        "mcp_tool_access": mcp_permission
+                    },
+                    "mcp": {
                         "servers": [
-                          {{ "id": "github", "tools": [{{ "name": "{allowed_tool}", "side_effect": "{side_effect}", "approval": "{approval}", "idempotency": "{idempotency}", "retry": "{retry}" }}] }}
+                            { "id": "github", "tools": [{ "name": allowed_tool, "side_effect": side_effect, "approval": approval, "idempotency": idempotency, "retry": retry }] }
                         ]
-                      }}
-                    }}
-                  ]
-                }}"#
-            ),
+                    }
+                }
+            ]
+        });
+        std::fs::write(
+            brownie_dir.join("modepack.json"),
+            serde_json::to_string(&pack).expect("modepack json"),
         )
         .expect("modepack");
     }
@@ -69449,24 +69483,26 @@ content-length: {}
     ) {
         let brownie_dir = workspace_root.join(".brownie");
         std::fs::create_dir_all(&brownie_dir).expect("brownie dir");
-        std::fs::write(
-            brownie_dir.join("modepack.json"),
-            format!(
-                r#"{{
-                  "name": "mcp-pack",
-                  "schema_version": 1,
-                  "mcp_servers": {{
-                    "github": {{
-                      "transport": "stdio",
-                      "command": "{server_command}"
-                    }}
-                  }},
-                  "modes": [
-                    {{
-                      "mode_id": "reviewer",
-                      "display_name": "Reviewer",
-                      "role_definition": "Legacy MCP allow-list does not grant safety.",
-                      "permissions": {{
+        let (command, args) = mcp_command_and_args(server_command);
+        let mut server_obj = serde_json::json!({
+            "transport": "stdio",
+            "command": command
+        });
+        if !args.is_empty() {
+            server_obj["args"] = serde_json::json!(args);
+        }
+        let pack = serde_json::json!({
+            "name": "mcp-pack",
+            "schema_version": 1,
+            "mcp_servers": {
+                "github": server_obj
+            },
+            "modes": [
+                {
+                    "mode_id": "reviewer",
+                    "display_name": "Reviewer",
+                    "role_definition": "Legacy MCP allow-list does not grant safety.",
+                    "permissions": {
                         "read_only": false,
                         "workspace_write": false,
                         "process_exec": false,
@@ -69474,17 +69510,19 @@ content-length: {}
                         "service_control": false,
                         "destructive": false,
                         "can_spawn_subtasks": false,
-                        "mcp_tool_access": {mcp_permission}
-                      }},
-                      "mcp": {{
+                        "mcp_tool_access": mcp_permission
+                    },
+                    "mcp": {
                         "servers": [
-                          {{ "id": "github", "tools": ["{allowed_tool}"] }}
+                            { "id": "github", "tools": [allowed_tool] }
                         ]
-                      }}
-                    }}
-                  ]
-                }}"#
-            ),
+                    }
+                }
+            ]
+        });
+        std::fs::write(
+            brownie_dir.join("modepack.json"),
+            serde_json::to_string(&pack).expect("modepack json"),
         )
         .expect("modepack");
     }
