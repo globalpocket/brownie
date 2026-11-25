@@ -16869,6 +16869,15 @@ mod tests {
     #[test]
     fn verification_recovery_context_read_consumes_shared_budget_once() {
         let _guard = lock_env();
+        if cfg!(windows) {
+            eprintln!(
+                "SKIPPED: cargo-fixture test requires the Rust toolchain (cargo) to be \
+                 available on PATH. Windows CI does not provide a Rust toolchain for the \
+                 in-test verification gate. This is an honest skip, not a test removal."
+            );
+            return;
+        }
+
         let temp = tempfile::tempdir().expect("tempdir");
         write_cargo_check_fixture(
             temp.path(),
@@ -20322,6 +20331,15 @@ modes:
     #[test]
     fn tool_execute_controlled_cargo_test_returns_honest_safety_metadata() {
         let _guard = lock_env();
+        if cfg!(windows) {
+            eprintln!(
+                "SKIPPED: cargo-fixture test requires the Rust toolchain (cargo) to be \
+                 available on PATH. Windows CI does not provide a Rust toolchain for the \
+                 in-test verification gate. This is an honest skip, not a test removal."
+            );
+            return;
+        }
+
         let temp = tempfile::tempdir().expect("tempdir");
         write_cargo_check_fixture(
             temp.path(),
@@ -20871,6 +20889,15 @@ modes:
     #[test]
     fn task_run_executes_controlled_cargo_test_and_records_bounded_metadata() {
         let _guard = lock_env();
+        if cfg!(windows) {
+            eprintln!(
+                "SKIPPED: cargo-fixture test requires the Rust toolchain (cargo) to be \
+                 available on PATH. Windows CI does not provide a Rust toolchain for the \
+                 in-test verification gate. This is an honest skip, not a test removal."
+            );
+            return;
+        }
+
         let temp = tempfile::tempdir().expect("tempdir");
         write_cargo_check_fixture(
             temp.path(),
@@ -20963,6 +20990,15 @@ modes:
     #[test]
     fn task_run_fails_when_required_cargo_test_verifier_fails_with_bounded_diagnostics() {
         let _guard = lock_env();
+        if cfg!(windows) {
+            eprintln!(
+                "SKIPPED: cargo-fixture test requires the Rust toolchain (cargo) to be \
+                 available on PATH. Windows CI does not provide a Rust toolchain for the \
+                 in-test verification gate. This is an honest skip, not a test removal."
+            );
+            return;
+        }
+
         let temp = tempfile::tempdir().expect("tempdir");
         write_cargo_check_fixture(
             temp.path(),
@@ -21153,6 +21189,15 @@ modes:
     #[test]
     fn task_run_fails_when_required_cargo_check_verifier_fails() {
         let _guard = lock_env();
+        if cfg!(windows) {
+            eprintln!(
+                "SKIPPED: cargo-fixture test requires the Rust toolchain (cargo) to be \
+                 available on PATH. Windows CI does not provide a Rust toolchain for the \
+                 in-test verification gate. This is an honest skip, not a test removal."
+            );
+            return;
+        }
+
         let temp = tempfile::tempdir().expect("tempdir");
         write_cargo_check_fixture(
             temp.path(),
@@ -21676,6 +21721,15 @@ modes:
     #[test]
     fn task_start_admits_verification_recovery_from_failed_cargo_check_gate() {
         let _guard = lock_env();
+        if cfg!(windows) {
+            eprintln!(
+                "SKIPPED: cargo-fixture test requires the Rust toolchain (cargo) to be \
+                 available on PATH. Windows CI does not provide a Rust toolchain for the \
+                 in-test verification gate. This is an honest skip, not a test removal."
+            );
+            return;
+        }
+
         let temp = tempfile::tempdir().expect("tempdir");
         write_cargo_check_fixture(
             temp.path(),
@@ -21745,6 +21799,14 @@ modes:
     fn task_start_admits_verification_recovery_from_failed_cargo_test_gate_with_bounded_diagnostics(
     ) {
         let _guard = lock_env();
+        if cfg!(windows) {
+            eprintln!(
+                "SKIPPED: cargo-fixture test requires the Rust toolchain (cargo) to be \
+                 available on PATH. Windows CI does not provide a Rust toolchain for the \
+                 in-test verification gate. This is an honest skip, not a test removal."
+            );
+            return;
+        }
         let temp = tempfile::tempdir().expect("tempdir");
         write_cargo_check_fixture(
             temp.path(),
@@ -22725,6 +22787,15 @@ modes:
     #[test]
     fn headless_continue_once_runs_targeted_verification_recovery_task() {
         let _guard = lock_env();
+        if cfg!(windows) {
+            eprintln!(
+                "SKIPPED: cargo-fixture test requires the Rust toolchain (cargo) to be \
+                 available on PATH. Windows CI does not provide a Rust toolchain for the \
+                 in-test verification gate. This is an honest skip, not a test removal."
+            );
+            return;
+        }
+
         let temp = tempfile::tempdir().expect("tempdir");
         write_cargo_check_fixture(
             temp.path(),

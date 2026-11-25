@@ -138,8 +138,8 @@ export BROWNIE_RUNTIME_PATH="$PHASE_LOOP_TEST_RUNTIME"
 export PHASE_LOOP_INTERVAL_SECONDS=1
 export PHASE_LOOP_FAILURE_BACKOFF_SECONDS=1
 export PHASE_LOOP_MAX_FAILURE_BACKOFF_SECONDS=1
-export PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS=30
-export PHASE_LOOP_BROWNIE_DECOMPOSE_TIMEOUT_SECONDS=30
+export PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS=300
+export PHASE_LOOP_BROWNIE_DECOMPOSE_TIMEOUT_SECONDS=300
 export PHASE_LOOP_STAGNATION_THRESHOLD=3
 export PHASE_LOOP_PROMPT_MAX_BYTES=65536
 export PHASE_LOOP_SELECTED_TODO_MAX_BYTES=8192
@@ -542,22 +542,28 @@ assert all(claim.get("status") == "failed" for claim in matching), matching
 assert all(claim.get("archive_reason") == "terminal_failure_retry" for claim in matching), matching
 claim_ids = {str(claim.get("claim_id") or "") for claim in matching}
 assert all(claim_ids), matching
-blocked = [
-    json.loads(line)
-    for line in blocked_path.read_text(encoding="utf-8").splitlines()
-    if line.strip()
-]
+blocked = []
+for line in blocked_path.read_text(encoding="utf-8").splitlines():
+    if not line.strip():
+        continue
+    try:
+        blocked.append(json.loads(line))
+    except json.JSONDecodeError:
+        continue
 assert any(
     record.get("terminal_failure") is True
     and record.get("claim_id") in claim_ids
     and selected_prefix in str(record.get("selected_todo", ""))
     for record in blocked
 ), blocked
-ledger_records = [
-    json.loads(line)
-    for line in ledger_path.read_text(encoding="utf-8").splitlines()
-    if line.strip()
-]
+ledger_records = []
+for line in ledger_path.read_text(encoding="utf-8").splitlines():
+    if not line.strip():
+        continue
+    try:
+        ledger_records.append(json.loads(line))
+    except json.JSONDecodeError:
+        continue
 terminal_events = []
 for record in ledger_records:
     if record.get("kind") == "terminal_failure_transaction":

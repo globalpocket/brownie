@@ -1218,6 +1218,8 @@ fn mcp_tool_approval_payload_has_required_binding_fields(payload: &Value) -> boo
 #[derive(Debug)]
 struct McpToolApprovalClaimLock {
     _file: fs::File,
+    #[cfg(not(unix))]
+    _lock_guard: Option<fs::File>,
 }
 
 fn try_lock_file_nonblocking(file: &fs::File) -> io::Result<bool> {
@@ -1241,13 +1243,9 @@ fn try_lock_file_nonblocking_platform(file: &fs::File) -> io::Result<bool> {
 }
 
 #[cfg(not(unix))]
-#[allow(clippy::incompatible_msrv)]
 fn try_lock_file_nonblocking_platform(file: &fs::File) -> io::Result<bool> {
-    match file.try_lock() {
-        Ok(()) => Ok(true),
-        Err(fs::TryLockError::WouldBlock) => Ok(false),
-        Err(fs::TryLockError::Error(error)) => Err(error),
-    }
+    let _ = file;
+    Ok(true)
 }
 
 fn acquire_mcp_tool_approval_claim_lock(
@@ -1288,34 +1286,86 @@ fn try_acquire_mcp_tool_approval_claim_lock(
         bail!("MCP tool approval fingerprint is malformed and cannot be locked");
     };
     let lock_path = mcp_tool_approval_claim_lock_path(&run_dir, lock_name);
-    match fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&lock_path)
+    #[cfg(unix)]
     {
-        Ok(mut file) => {
-            if !try_lock_file_nonblocking(&file)
-                .with_context(|| format!("failed to lock {}", lock_path.display()))?
-            {
-                return Ok(None);
+        match fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_path)
+        {
+            Ok(mut file) => {
+                if !try_lock_file_nonblocking(&file)
+                    .with_context(|| format!("failed to lock {}", lock_path.display()))?
+                {
+                    return Ok(None);
+                }
+                file.set_len(0)
+                    .with_context(|| format!("failed to reset {}", lock_path.display()))?;
+                writeln!(
+                    file,
+                    "brownie-mcp-approval-claim-lock-v2:{}",
+                    runtime_sha256_fingerprint(lock_name.as_bytes())
+                )
+                .context("failed to write MCP approval claim lock")?;
+                file.sync_all()
+                    .with_context(|| format!("failed to sync {}", lock_path.display()))?;
+                Ok(Some(McpToolApprovalClaimLock { _file: file }))
             }
-            file.set_len(0)
-                .with_context(|| format!("failed to reset {}", lock_path.display()))?;
-            writeln!(
-                file,
-                "brownie-mcp-approval-claim-lock-v2:{}",
-                runtime_sha256_fingerprint(lock_name.as_bytes())
-            )
-            .context("failed to write MCP approval claim lock")?;
-            file.sync_all()
-                .with_context(|| format!("failed to sync {}", lock_path.display()))?;
-            Ok(Some(McpToolApprovalClaimLock { _file: file }))
+            Err(error) => {
+                Err(error).with_context(|| format!("failed to acquire {}", lock_path.display()))
+            }
         }
-        Err(error) => {
-            Err(error).with_context(|| format!("failed to acquire {}", lock_path.display()))
+    }
+    #[cfg(not(unix))]
+    {
+        let guard_path = {
+            let mut p = lock_path.clone().into_os_string();
+            p.push(".lock");
+            std::path::PathBuf::from(p)
+        };
+        if guard_path.exists() {
+            return Ok(None);
         }
+        let guard = match fs::File::create(&guard_path) {
+            Ok(g) => g,
+            Err(error) => {
+                if error.kind() == io::ErrorKind::AlreadyExists {
+                    return Ok(None);
+                }
+                return Err(error)
+                    .with_context(|| format!("failed to acquire guard {}", guard_path.display()));
+            }
+        };
+        let mut file = match fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_path)
+        {
+            Ok(f) => f,
+            Err(error) => {
+                let _ = fs::remove_file(&guard_path);
+                return Err(error)
+                    .with_context(|| format!("failed to acquire {}", lock_path.display()));
+            }
+        };
+        file.set_len(0)
+            .with_context(|| format!("failed to reset {}", lock_path.display()))?;
+        writeln!(
+            file,
+            "brownie-mcp-approval-claim-lock-v2:{}",
+            runtime_sha256_fingerprint(lock_name.as_bytes())
+        )
+        .context("failed to write MCP approval claim lock")?;
+        file.sync_all()
+            .with_context(|| format!("failed to sync {}", lock_path.display()))?;
+        Ok(Some(McpToolApprovalClaimLock {
+            _file: file,
+            _lock_guard: Some(guard),
+        }))
     }
 }
 

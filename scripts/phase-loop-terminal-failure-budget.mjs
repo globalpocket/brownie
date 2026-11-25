@@ -86,7 +86,7 @@ export function readBlockedClaimRecords(filename) {
   try {
     text = fs.readFileSync(filename, 'utf8');
   } catch (error) {
-    if (error.code === 'ENOENT') return [];
+    if (error.code === 'ENOENT' || error.code === 'EISDIR') return [];
     throw error;
   }
   return text.split('\n').flatMap((line, index) => {
