@@ -69545,7 +69545,7 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[]},"error":{"code":-32
             "timeout" => {
                 r#"#!/bin/sh
 read request
-sleep 5
+sleep 35
 "#
                 .to_string()
             }
@@ -69634,7 +69634,7 @@ case "$request" in
     printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
     ;;
   *tools/call*)
-    sleep 5
+    sleep 35
     ;;
   *)
     printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'

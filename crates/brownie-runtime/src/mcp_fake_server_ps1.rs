@@ -11,7 +11,10 @@
 pub fn fake_server_ps1(scenario: &str) -> String {
     // Timeout / exit scenarios do not return a JSON response.
     match scenario {
-        "timeout" => "Read-Host -Prompt '' | Out-Null\nStart-Sleep -Seconds 5\n".to_string(),
+        "timeout" => {
+            // Sleep past MCP_STDIO_TIMEOUT_MS (20s) so the client deadline fires.
+            "Read-Host -Prompt '' | Out-Null\nStart-Sleep -Seconds 35\n".to_string()
+        }
         "timeout_pid" => {
             // Write this process's PID to the PID file, then sleep.
             format!(
