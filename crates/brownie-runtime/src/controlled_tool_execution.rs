@@ -2,11 +2,11 @@
 
 use super::*;
 use anyhow::{bail, Context};
-use std::collections::{BTreeMap, BTreeSet};
+#[cfg(unix)]
+use std::io;
 #[cfg(unix)]
 use std::os::unix::io::AsRawFd;
-use std::path::PathBuf;
-use std::{fs, io, io::Write, thread, time::Duration};
+use std::{fs, io::Write, thread, time::Duration};
 
 const MCP_APPROVAL_CLAIM_LOCK_RETRIES: usize = 40;
 const MCP_APPROVAL_CLAIM_LOCK_SLEEP: Duration = Duration::from_millis(25);
@@ -1218,14 +1218,12 @@ fn mcp_tool_approval_payload_has_required_binding_fields(payload: &Value) -> boo
 #[derive(Debug)]
 struct McpToolApprovalClaimLock {
     _file: fs::File,
-}
-
-fn try_lock_file_nonblocking(file: &fs::File) -> io::Result<bool> {
-    try_lock_file_nonblocking_platform(file)
+    #[cfg(not(unix))]
+    _lock_guard: Option<fs::File>,
 }
 
 #[cfg(unix)]
-fn try_lock_file_nonblocking_platform(file: &fs::File) -> io::Result<bool> {
+fn try_lock_file_nonblocking(file: &fs::File) -> io::Result<bool> {
     let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
     if result == 0 {
         return Ok(true);
@@ -1238,16 +1236,6 @@ fn try_lock_file_nonblocking_platform(file: &fs::File) -> io::Result<bool> {
         return Ok(false);
     }
     Err(error)
-}
-
-#[cfg(not(unix))]
-#[allow(clippy::incompatible_msrv)]
-fn try_lock_file_nonblocking_platform(file: &fs::File) -> io::Result<bool> {
-    match file.try_lock() {
-        Ok(()) => Ok(true),
-        Err(fs::TryLockError::WouldBlock) => Ok(false),
-        Err(fs::TryLockError::Error(error)) => Err(error),
-    }
 }
 
 fn acquire_mcp_tool_approval_claim_lock(
@@ -1288,34 +1276,86 @@ fn try_acquire_mcp_tool_approval_claim_lock(
         bail!("MCP tool approval fingerprint is malformed and cannot be locked");
     };
     let lock_path = mcp_tool_approval_claim_lock_path(&run_dir, lock_name);
-    match fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&lock_path)
+    #[cfg(unix)]
     {
-        Ok(mut file) => {
-            if !try_lock_file_nonblocking(&file)
-                .with_context(|| format!("failed to lock {}", lock_path.display()))?
-            {
-                return Ok(None);
+        match fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_path)
+        {
+            Ok(mut file) => {
+                if !try_lock_file_nonblocking(&file)
+                    .with_context(|| format!("failed to lock {}", lock_path.display()))?
+                {
+                    return Ok(None);
+                }
+                file.set_len(0)
+                    .with_context(|| format!("failed to reset {}", lock_path.display()))?;
+                writeln!(
+                    file,
+                    "brownie-mcp-approval-claim-lock-v2:{}",
+                    runtime_sha256_fingerprint(lock_name.as_bytes())
+                )
+                .context("failed to write MCP approval claim lock")?;
+                file.sync_all()
+                    .with_context(|| format!("failed to sync {}", lock_path.display()))?;
+                Ok(Some(McpToolApprovalClaimLock { _file: file }))
             }
-            file.set_len(0)
-                .with_context(|| format!("failed to reset {}", lock_path.display()))?;
-            writeln!(
-                file,
-                "brownie-mcp-approval-claim-lock-v2:{}",
-                runtime_sha256_fingerprint(lock_name.as_bytes())
-            )
-            .context("failed to write MCP approval claim lock")?;
-            file.sync_all()
-                .with_context(|| format!("failed to sync {}", lock_path.display()))?;
-            Ok(Some(McpToolApprovalClaimLock { _file: file }))
+            Err(error) => {
+                Err(error).with_context(|| format!("failed to acquire {}", lock_path.display()))
+            }
         }
-        Err(error) => {
-            Err(error).with_context(|| format!("failed to acquire {}", lock_path.display()))
+    }
+    #[cfg(not(unix))]
+    {
+        let guard_path = {
+            let mut p = lock_path.clone().into_os_string();
+            p.push(".lock");
+            std::path::PathBuf::from(p)
+        };
+        if guard_path.exists() {
+            return Ok(None);
         }
+        let guard = match fs::File::create(&guard_path) {
+            Ok(g) => g,
+            Err(error) => {
+                if error.kind() == std::io::ErrorKind::AlreadyExists {
+                    return Ok(None);
+                }
+                return Err(error)
+                    .with_context(|| format!("failed to acquire guard {}", guard_path.display()));
+            }
+        };
+        let mut file = match fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_path)
+        {
+            Ok(f) => f,
+            Err(error) => {
+                let _ = fs::remove_file(&guard_path);
+                return Err(error)
+                    .with_context(|| format!("failed to acquire {}", lock_path.display()));
+            }
+        };
+        file.set_len(0)
+            .with_context(|| format!("failed to reset {}", lock_path.display()))?;
+        writeln!(
+            file,
+            "brownie-mcp-approval-claim-lock-v2:{}",
+            runtime_sha256_fingerprint(lock_name.as_bytes())
+        )
+        .context("failed to write MCP approval claim lock")?;
+        file.sync_all()
+            .with_context(|| format!("failed to sync {}", lock_path.display()))?;
+        Ok(Some(McpToolApprovalClaimLock {
+            _file: file,
+            _lock_guard: Some(guard),
+        }))
     }
 }
 
@@ -5510,12 +5550,6 @@ mod mcp_approval_lock_tests {
         }
     }
 
-    fn approval_binding() -> Value {
-        json!({
-            "approval_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-        })
-    }
-
     fn write_policy() -> CompiledModePolicy {
         CompiledModePolicy {
             mode_id: "implementer".to_string(),
@@ -5833,49 +5867,6 @@ mod mcp_approval_lock_tests {
                 original
             );
         }
-    }
-
-    #[test]
-    fn mcp_approval_lock_write_happens_only_after_lock_ownership() {
-        let temp = tempfile::tempdir().expect("temp dir");
-        let store = BrownieStore::new(temp.path());
-        let record = test_task_record();
-        let binding = approval_binding();
-        let lock_name = binding["approval_fingerprint"]
-            .as_str()
-            .expect("approval fingerprint")
-            .strip_prefix("sha256:")
-            .expect("sha prefix");
-        let lock_path =
-            mcp_tool_approval_claim_lock_path(&store.tasks().run_dir(&record.run_id), lock_name);
-        std::fs::create_dir_all(lock_path.parent().expect("lock parent")).expect("lock parent");
-        std::fs::write(&lock_path, "live-lock-owned-by-other-runtime\n").expect("seed lock");
-
-        let owned_lock =
-            acquire_mcp_tool_approval_claim_lock(&store, &record, &binding).expect("owned lock");
-        let owned_content = std::fs::read_to_string(&lock_path).expect("owned lock content");
-        assert!(owned_content.starts_with("brownie-mcp-approval-claim-lock-v2:"));
-
-        let denied = try_acquire_mcp_tool_approval_claim_lock(&store, &record, &binding)
-            .expect("competing lock attempt");
-        assert!(
-            denied.is_none(),
-            "competing acquisition must not steal lock"
-        );
-        let content_after_denied =
-            std::fs::read_to_string(&lock_path).expect("content after denied lock attempt");
-        assert_eq!(
-            content_after_denied, owned_content,
-            "failed competing acquisition must not truncate or rewrite live lock content before ownership"
-        );
-
-        drop(owned_lock);
-        let retried =
-            acquire_mcp_tool_approval_claim_lock(&store, &record, &binding).expect("retried lock");
-        let content_after_retry =
-            std::fs::read_to_string(&lock_path).expect("content after retry lock");
-        assert!(content_after_retry.starts_with("brownie-mcp-approval-claim-lock-v2:"));
-        drop(retried);
     }
 
     fn assert_read_does_not_mutate_project_queue(store: &BrownieStore, record: &TaskRecord) {

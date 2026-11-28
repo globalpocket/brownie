@@ -647,13 +647,14 @@ function validateLeafBlock(block, errors, options = {}) {
   // but arbitrary documentation remains a separate delivery scope.
   const generatedCompanions = [
     'docs/architecture/runtime-release-readiness-audit.json',
-    'docs/architecture/runtime-release-contract.json'
+    'docs/architecture/runtime-release-contract.json',
+    'docs/architecture/runtime-module-decomposition-assessment.json'
   ];
   const docScopes = scopes.filter((target) => target.startsWith('docs/'));
-  const generatedCompanionContract = docScopes.length === 2
-    && generatedCompanions.every((target) => docScopes.includes(target))
+  const generatedCompanionContract = generatedCompanions.every((target) => docScopes.includes(target))
+    && docScopes.length === generatedCompanions.length
     && scopes.some((target) => !target.startsWith('docs/'))
-    && completionLines(block).join(' ').includes('Only safety_readiness_evidence_invalidation.tracked_fingerprint and commit_trace.readiness_audit_content_sha256 may change in the two generated documents.')
+    && completionLines(block).join(' ').includes('Only generated architecture document fingerprints may change.')
     && verificationCommands.includes('node scripts/update-runtime-release-readiness-audit.mjs --check');
   if (route === 'implementation' && docScopes.length > 0 && !generatedCompanionContract) {
     errors.push(`${owner}: implementation leaves must not patch docs/ targets.`);

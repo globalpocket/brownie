@@ -8,8 +8,14 @@ on:
 
 jobs:
   check:
+    needs: runtime-platform
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
+      - name: Require Runtime platform checks
+        if: ${{ always() && needs.runtime-platform.result != 'success' }}
+        run: exit 1
+
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -200,8 +206,35 @@ jobs:
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: Runtime cargo test
-        if: runner.os != 'Windows'
         run: cargo test -p brownie-runtime --all-features
+
+      - name: Runtime workspace recovery on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tests = @(
+            'tests::patch_recovery_owned_process_kill_controls',
+            'tests::create_recovery_owned_process_kill_controls',
+            'tests::delete_recovery_owned_process_kill_controls',
+            'tests::durable_replace_transaction_owned_process_recovery',
+            'tests::durable_create_transaction_owned_process_recovery',
+            'tests::durable_delete_transaction_owned_process_recovery',
+            'tests::durable_explicit_transaction_owned_process_recovery'
+          )
+          $registered = cargo test -p brownie-runtime --all-features --lib -- --list
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($test in $tests) {
+            if ($registered -cnotcontains "${test}: test") {
+              throw "Required Windows recovery test is missing: $test"
+            }
+            $output = cargo test -p brownie-runtime --all-features --lib $test -- --exact
+            $testExit = $LASTEXITCODE
+            $output | Write-Output
+            if ($testExit -ne 0) { exit $testExit }
+            if ($output -cnotcontains "test $test ... ok") {
+              throw "Required Windows recovery test did not report a pass: $test"
+            }
+          }
 
       - name: Verify unsupported index platform fails closed
         if: runner.os == 'Windows'

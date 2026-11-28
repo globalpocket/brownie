@@ -18,7 +18,11 @@ use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
 pub const MCP_PROTOCOL_VERSION: &str = "2026-07-28";
-const MCP_STDIO_TIMEOUT_MS: u64 = 2_000;
+// The budget must cover slow interpreter startup on Windows CI, where the
+// fake MCP test servers are PowerShell scripts that need several seconds to
+// start. Timeout scenarios sleep past this budget so the deadline still
+// fires.
+const MCP_STDIO_TIMEOUT_MS: u64 = 20_000;
 const MAX_MCP_RESPONSE_BYTES: usize = 131_072;
 const MAX_MCP_SCHEMA_BYTES: usize = 16_384;
 const MAX_MCP_DESCRIPTION_CHARS: usize = 1_000;

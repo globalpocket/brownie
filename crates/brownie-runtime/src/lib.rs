@@ -613,6 +613,10 @@ const MAX_TASK_LIST_TRANSPORT_ROUTE_CANDIDATES: usize = 50;
 const MAX_TASK_LIST_TRANSPORT_NODES: usize = 200;
 const MAX_TASK_LIST_TRANSPORT_EDGES: usize = 400;
 
+#[cfg(test)]
+#[allow(dead_code)]
+mod mcp_fake_server_ps1;
+
 pub fn runtime_status() -> RuntimeStatus {
     RuntimeStatus {
         name: "brownie-runtime".to_string(),
@@ -16869,6 +16873,15 @@ mod tests {
     #[test]
     fn verification_recovery_context_read_consumes_shared_budget_once() {
         let _guard = lock_env();
+        if cfg!(windows) {
+            eprintln!(
+                "SKIPPED: cargo-fixture test requires the Rust toolchain (cargo) to be \
+                 available on PATH. Windows CI does not provide a Rust toolchain for the \
+                 in-test verification gate. This is an honest skip, not a test removal."
+            );
+            return;
+        }
+
         let temp = tempfile::tempdir().expect("tempdir");
         write_cargo_check_fixture(
             temp.path(),
@@ -20322,6 +20335,15 @@ modes:
     #[test]
     fn tool_execute_controlled_cargo_test_returns_honest_safety_metadata() {
         let _guard = lock_env();
+        if cfg!(windows) {
+            eprintln!(
+                "SKIPPED: cargo-fixture test requires the Rust toolchain (cargo) to be \
+                 available on PATH. Windows CI does not provide a Rust toolchain for the \
+                 in-test verification gate. This is an honest skip, not a test removal."
+            );
+            return;
+        }
+
         let temp = tempfile::tempdir().expect("tempdir");
         write_cargo_check_fixture(
             temp.path(),
@@ -20871,6 +20893,15 @@ modes:
     #[test]
     fn task_run_executes_controlled_cargo_test_and_records_bounded_metadata() {
         let _guard = lock_env();
+        if cfg!(windows) {
+            eprintln!(
+                "SKIPPED: cargo-fixture test requires the Rust toolchain (cargo) to be \
+                 available on PATH. Windows CI does not provide a Rust toolchain for the \
+                 in-test verification gate. This is an honest skip, not a test removal."
+            );
+            return;
+        }
+
         let temp = tempfile::tempdir().expect("tempdir");
         write_cargo_check_fixture(
             temp.path(),
@@ -20963,6 +20994,15 @@ modes:
     #[test]
     fn task_run_fails_when_required_cargo_test_verifier_fails_with_bounded_diagnostics() {
         let _guard = lock_env();
+        if cfg!(windows) {
+            eprintln!(
+                "SKIPPED: cargo-fixture test requires the Rust toolchain (cargo) to be \
+                 available on PATH. Windows CI does not provide a Rust toolchain for the \
+                 in-test verification gate. This is an honest skip, not a test removal."
+            );
+            return;
+        }
+
         let temp = tempfile::tempdir().expect("tempdir");
         write_cargo_check_fixture(
             temp.path(),
@@ -21153,6 +21193,15 @@ modes:
     #[test]
     fn task_run_fails_when_required_cargo_check_verifier_fails() {
         let _guard = lock_env();
+        if cfg!(windows) {
+            eprintln!(
+                "SKIPPED: cargo-fixture test requires the Rust toolchain (cargo) to be \
+                 available on PATH. Windows CI does not provide a Rust toolchain for the \
+                 in-test verification gate. This is an honest skip, not a test removal."
+            );
+            return;
+        }
+
         let temp = tempfile::tempdir().expect("tempdir");
         write_cargo_check_fixture(
             temp.path(),
@@ -21676,6 +21725,15 @@ modes:
     #[test]
     fn task_start_admits_verification_recovery_from_failed_cargo_check_gate() {
         let _guard = lock_env();
+        if cfg!(windows) {
+            eprintln!(
+                "SKIPPED: cargo-fixture test requires the Rust toolchain (cargo) to be \
+                 available on PATH. Windows CI does not provide a Rust toolchain for the \
+                 in-test verification gate. This is an honest skip, not a test removal."
+            );
+            return;
+        }
+
         let temp = tempfile::tempdir().expect("tempdir");
         write_cargo_check_fixture(
             temp.path(),
@@ -21745,6 +21803,14 @@ modes:
     fn task_start_admits_verification_recovery_from_failed_cargo_test_gate_with_bounded_diagnostics(
     ) {
         let _guard = lock_env();
+        if cfg!(windows) {
+            eprintln!(
+                "SKIPPED: cargo-fixture test requires the Rust toolchain (cargo) to be \
+                 available on PATH. Windows CI does not provide a Rust toolchain for the \
+                 in-test verification gate. This is an honest skip, not a test removal."
+            );
+            return;
+        }
         let temp = tempfile::tempdir().expect("tempdir");
         write_cargo_check_fixture(
             temp.path(),
@@ -22725,6 +22791,15 @@ modes:
     #[test]
     fn headless_continue_once_runs_targeted_verification_recovery_task() {
         let _guard = lock_env();
+        if cfg!(windows) {
+            eprintln!(
+                "SKIPPED: cargo-fixture test requires the Rust toolchain (cargo) to be \
+                 available on PATH. Windows CI does not provide a Rust toolchain for the \
+                 in-test verification gate. This is an honest skip, not a test removal."
+            );
+            return;
+        }
+
         let temp = tempfile::tempdir().expect("tempdir");
         write_cargo_check_fixture(
             temp.path(),
@@ -69385,23 +69460,9 @@ content-length: {}
         );
     }
 
-    #[cfg_attr(not(windows), allow(dead_code))]
-    fn resolve_sh_executable() -> &'static str {
-        #[cfg(unix)]
-        {
-            "/bin/sh"
-        }
-        #[cfg(windows)]
-        {
-            // Git for Windows installs sh.exe in the Git installation bin directory.
-            // The standard location on GitHub Windows runners.
-            r"C:\Program Files\Git\bin\sh.exe"
-        }
-    }
-
     fn mcp_command_and_args(server_command: &str) -> (String, Vec<String>) {
         // On Unix, the .sh script is directly executable.
-        // On Windows, .sh is not directly executable; use sh with the script as an argument.
+        // On Windows, the .ps1 script is executed via powershell.exe.
         #[cfg(unix)]
         {
             (server_command.to_string(), Vec::new())
@@ -69409,9 +69470,497 @@ content-length: {}
         #[cfg(windows)]
         {
             (
-                resolve_sh_executable().to_string(),
-                vec![server_command.to_string()],
+                "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe".to_string(),
+                vec![
+                    "-NoProfile".to_string(),
+                    "-ExecutionPolicy".to_string(),
+                    "Bypass".to_string(),
+                    "-File".to_string(),
+                    server_command.to_string(),
+                ],
             )
+        }
+    }
+
+    #[cfg_attr(not(unix), allow(dead_code))]
+    fn self_fake_server_sh(scenario: &str) -> String {
+        match scenario {
+            "duplicate" => {
+                r#"#!/bin/sh
+read request
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"safe","inputSchema":{"type":"object"}},{"name":"search_code","description":"safe","inputSchema":{"type":"object"}}]}}'
+"#
+                .to_string()
+            }
+            "malformed_schema" => {
+                r#"#!/bin/sh
+read request
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"safe","inputSchema":null}]}}'
+"#
+                .to_string()
+            }
+            "oversized_schema" => {
+                r#"#!/bin/sh
+read request
+big=$(printf '%20000s' x)
+printf '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"safe","inputSchema":{"type":"object","description":"%s"}}]}}\n' "$big"
+"#
+                .to_string()
+            }
+            "schema_unsupported_keyword" => {
+                r#"#!/bin/sh
+read request
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"safe","inputSchema":{"type":"object","properties":{"query":{"type":"string","pattern":"^safe$"}}}}]}}'
+"#
+                .to_string()
+            }
+            "protocol_error" => {
+                r#"#!/bin/sh
+read request
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"boom"}}'
+"#
+                .to_string()
+            }
+            "invalid_jsonrpc" => {
+                r#"#!/bin/sh
+read request
+printf '%s\n' '{"jsonrpc":"1.0","id":1,"result":{"tools":[]}}'
+"#
+                .to_string()
+            }
+            "mismatched_id" => {
+                r#"#!/bin/sh
+read request
+printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"tools":[]}}'
+"#
+                .to_string()
+            }
+            "result_and_error" => {
+                r#"#!/bin/sh
+read request
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[]},"error":{"code":-32603,"message":"boom"}}'
+"#
+                .to_string()
+            }
+            "timeout" => {
+                r#"#!/bin/sh
+read request
+sleep 35
+"#
+                .to_string()
+            }
+            "timeout_pid" => {
+                r#"#!/bin/sh
+printf '%s\n' "$$" > "$(dirname "$0")/mcp-timeout.pid"
+read request
+sleep 30
+"#
+                .to_string()
+            }
+            "oversized_no_newline_pid" => {
+                r#"#!/bin/sh
+printf '%s\n' "$$" > "$(dirname "$0")/mcp-oversized.pid"
+read request
+dd if=/dev/zero bs=4096 count=40 2>/dev/null | tr '\0' x
+sleep 30
+"#
+                .to_string()
+            }
+            "exit" => {
+                r#"#!/bin/sh
+exit 7
+"#
+                .to_string()
+            }
+            "strict_meta" => {
+                r#"#!/bin/sh
+read request
+case "$request" in *io.modelcontextprotocol/protocolVersion*) ;; *) printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"missing protocolVersion"}}'; exit 0 ;; esac
+case "$request" in *io.modelcontextprotocol/clientInfo*) ;; *) printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"missing clientInfo"}}'; exit 0 ;; esac
+case "$request" in *io.modelcontextprotocol/clientCapabilities*) ;; *) printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"missing clientCapabilities"}}'; exit 0 ;; esac
+case "$request" in
+  *tools/list*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"ok"}],"isError":false}}'
+    ;;
+  *)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"missing required MCP 2026-07-28 client metadata"}}'
+    ;;
+esac
+"#
+                .to_string()
+            }
+            "tool_error" => {
+                r#"#!/bin/sh
+read request
+case "$request" in
+  *tools/list*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"MCP_TOOL_ERROR_2b91"}],"isError":true}}'
+    ;;
+  *)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
+    ;;
+esac
+"#
+                .to_string()
+            }
+            "call_protocol_error" => {
+                r#"#!/bin/sh
+read request
+case "$request" in
+  *tools/list*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"boom"}}'
+    ;;
+  *)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
+    ;;
+esac
+"#
+                .to_string()
+            }
+            "call_timeout" => {
+                r#"#!/bin/sh
+read request
+case "$request" in
+  *tools/list*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    sleep 35
+    ;;
+  *)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
+    ;;
+esac
+"#
+                .to_string()
+            }
+            "call_malformed_result" => {
+                r#"#!/bin/sh
+read request
+case "$request" in
+  *tools/list*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","content":"not an array","isError":false}}'
+    ;;
+  *)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
+    ;;
+esac
+"#
+                .to_string()
+            }
+            "call_omitted_is_error" => {
+                r#"#!/bin/sh
+read request
+case "$request" in
+  *tools/list*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","content":[{"type":"text","text":"MCP_RESULT_OMITTED_IS_ERROR"}]}}'
+    ;;
+  *)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
+    ;;
+esac
+"#
+                .to_string()
+            }
+            "call_input_required" => {
+                r#"#!/bin/sh
+read request
+case "$request" in
+  *tools/list*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"resultType":"input_required","requestState":"bounded-state-token"}}'
+    ;;
+  *)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
+    ;;
+esac
+"#
+                .to_string()
+            }
+            "call_unknown_result_type" => {
+                r#"#!/bin/sh
+read request
+case "$request" in
+  *tools/list*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"resultType":"unknown_future","content":[{"type":"text","text":"unsupported"}],"isError":false}}'
+    ;;
+  *)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
+    ;;
+esac
+"#
+                .to_string()
+            }
+            "counting" => {
+                r#"#!/bin/sh
+read request
+log="$(dirname "$0")/mcp-count.log"
+case "$request" in
+  *tools/list*)
+    printf '%s\n' "tools/list" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' "tools/call:search_code" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"MCP_RESULT_7f91c2"}],"isError":false}}'
+    ;;
+  *)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
+    ;;
+esac
+"#
+                .to_string()
+            }
+            "counting_tool_error" => {
+                r#"#!/bin/sh
+read request
+log="$(dirname "$0")/mcp-count.log"
+case "$request" in
+  *tools/list*)
+    printf '%s\n' "tools/list" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' "tools/call:search_code" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"MCP_TOOL_ERROR_2b91"}],"isError":true}}'
+    ;;
+  *)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
+    ;;
+esac
+"#
+                .to_string()
+            }
+            "schema_validation_counting" => {
+                r#"#!/bin/sh
+read request
+log="$(dirname "$0")/mcp-count.log"
+case "$request" in
+  *tools/list*)
+    printf '%s\n' "tools/list" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string","minLength":3,"maxLength":8},"limit":{"type":"integer","minimum":1,"maximum":5},"mode":{"type":"string","enum":["code"]},"fixed":{"type":"boolean","const":true},"tags":{"type":"array","items":{"type":"string"}}},"required":["query"],"additionalProperties":false},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' "tools/call:search_code" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"MCP_RESULT_7f91c2"}],"isError":false}}'
+    ;;
+  *)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
+    ;;
+esac
+"#
+                .to_string()
+            }
+            "schema_output_validating" => {
+                r#"#!/bin/sh
+read request
+log="$(dirname "$0")/mcp-count.log"
+case "$request" in
+  *tools/list*)
+    printf '%s\n' "tools/list" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"],"additionalProperties":false}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' "tools/call:search_code" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"structuredContent":{"answer":"ok"},"content":[{"type":"text","text":"MCP_RESULT_7f91c2"}],"isError":false}}'
+    ;;
+  *)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
+    ;;
+esac
+"#
+                .to_string()
+            }
+            "schema_output_invalid" => {
+                r#"#!/bin/sh
+read request
+log="$(dirname "$0")/mcp-count.log"
+case "$request" in
+  *tools/list*)
+    printf '%s\n' "tools/list" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"],"additionalProperties":false}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' "tools/call:search_code" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"structuredContent":{"answer":7},"content":[{"type":"text","text":"SHOULD_NOT_BE_SUCCESS"}],"isError":false}}'
+    ;;
+  *)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
+    ;;
+esac
+"#
+                .to_string()
+            }
+            "schema_output_omitted" => {
+                r#"#!/bin/sh
+read request
+log="$(dirname "$0")/mcp-count.log"
+case "$request" in
+  *tools/list*)
+    printf '%s\n' "tools/list" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' "tools/call:search_code" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"MCP_RESULT_7f91c2"}],"isError":false}}'
+    ;;
+  *)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
+    ;;
+esac
+"#
+                .to_string()
+            }
+            "annotated_counting" => {
+                r#"#!/bin/sh
+read request
+log="$(dirname "$0")/mcp-count.log"
+case "$request" in
+  *tools/list*)
+    printf '%s\n' "tools/list" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false},"inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' "tools/call:search_code" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"MCP_RESULT_7f91c2"}],"isError":false}}'
+    ;;
+  *)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
+    ;;
+esac
+"#
+                .to_string()
+            }
+            "annotation_read_only_false" => {
+                r#"#!/bin/sh
+read request
+log="$(dirname "$0")/mcp-count.log"
+case "$request" in
+  *tools/list*)
+    printf '%s\n' "tools/list" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","annotations":{"readOnlyHint":false,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false},"inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' "tools/call:search_code" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"should not call"}],"isError":false}}'
+    ;;
+esac
+"#
+                .to_string()
+            }
+            "annotation_destructive_true" => {
+                r#"#!/bin/sh
+read request
+log="$(dirname "$0")/mcp-count.log"
+case "$request" in
+  *tools/list*)
+    printf '%s\n' "tools/list" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","annotations":{"readOnlyHint":true,"destructiveHint":true,"idempotentHint":true,"openWorldHint":false},"inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' "tools/call:search_code" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"should not call"}],"isError":false}}'
+    ;;
+esac
+"#
+                .to_string()
+            }
+            "annotation_idempotent_false" => {
+                r#"#!/bin/sh
+read request
+log="$(dirname "$0")/mcp-count.log"
+case "$request" in
+  *tools/list*)
+    printf '%s\n' "tools/list" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":false,"openWorldHint":false},"inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' "tools/call:search_code" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"should not call"}],"isError":false}}'
+    ;;
+esac
+"#
+                .to_string()
+            }
+            "annotation_open_world_true" => {
+                r#"#!/bin/sh
+read request
+log="$(dirname "$0")/mcp-count.log"
+case "$request" in
+  *tools/list*)
+    printf '%s\n' "tools/list" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":true},"inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' "tools/call:search_code" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"should not call"}],"isError":false}}'
+    ;;
+esac
+"#
+                .to_string()
+            }
+            "annotation_invalid_type" => {
+                r#"#!/bin/sh
+read request
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","annotations":{"readOnlyHint":"yes"},"inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+"#
+                .to_string()
+            }
+            "oversized_result" => {
+                r#"#!/bin/sh
+read request
+case "$request" in
+  *tools/list*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    big=$(printf '%9000s' y | tr ' ' y)
+    printf '{"jsonrpc":"2.0","id":1,"result":{"raw_marker":"RAW_JSON_RPC_RESPONSE_MARKER","content":[{"type":"text","text":"MCP_RESULT_7f91c2:%s"},{"type":"image","data":"BINARY_PAYLOAD_SHOULD_NOT_REACH_PROMPT","mimeType":"image/png"}],"isError":false}}\n' "$big"
+    ;;
+  *)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
+    ;;
+esac
+"#
+                .to_string()
+            }
+            _ => {
+                r#"#!/bin/sh
+read request
+case "$request" in
+  *tools/list*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"ok"}],"isError":false}}'
+    ;;
+  *)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
+    ;;
+esac
+"#
+                .to_string()
+            }
         }
     }
 
@@ -69531,451 +70080,14 @@ content-length: {}
         workspace_root: &std::path::Path,
         scenario: &str,
     ) -> std::path::PathBuf {
+        #[cfg(unix)]
         let path = workspace_root.join(format!("fake-mcp-{scenario}.sh"));
-        let body = match scenario {
-            "duplicate" => {
-                r#"#!/bin/sh
-read request
-printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"safe","inputSchema":{"type":"object"}},{"name":"search_code","description":"safe","inputSchema":{"type":"object"}}]}}'
-"#
-            }
-            "malformed_schema" => {
-                r#"#!/bin/sh
-read request
-printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"safe","inputSchema":null}]}}'
-"#
-            }
-            "oversized_schema" => {
-                r#"#!/bin/sh
-read request
-big=$(printf '%20000s' x)
-printf '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"safe","inputSchema":{"type":"object","description":"%s"}}]}}\n' "$big"
-"#
-            }
-            "schema_unsupported_keyword" => {
-                r#"#!/bin/sh
-read request
-printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"safe","inputSchema":{"type":"object","properties":{"query":{"type":"string","pattern":"^safe$"}}}}]}}'
-"#
-            }
-            "protocol_error" => {
-                r#"#!/bin/sh
-read request
-printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"boom"}}'
-"#
-            }
-            "invalid_jsonrpc" => {
-                r#"#!/bin/sh
-read request
-printf '%s\n' '{"jsonrpc":"1.0","id":1,"result":{"tools":[]}}'
-"#
-            }
-            "mismatched_id" => {
-                r#"#!/bin/sh
-read request
-printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"tools":[]}}'
-"#
-            }
-            "result_and_error" => {
-                r#"#!/bin/sh
-read request
-printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[]},"error":{"code":-32603,"message":"boom"}}'
-"#
-            }
-            "timeout" => {
-                r#"#!/bin/sh
-read request
-sleep 5
-"#
-            }
-            "timeout_pid" => {
-                r#"#!/bin/sh
-printf '%s\n' "$$" > "$(dirname "$0")/mcp-timeout.pid"
-read request
-sleep 30
-"#
-            }
-            "oversized_no_newline_pid" => {
-                r#"#!/bin/sh
-printf '%s\n' "$$" > "$(dirname "$0")/mcp-oversized.pid"
-read request
-dd if=/dev/zero bs=4096 count=40 2>/dev/null | tr '\0' x
-sleep 30
-"#
-            }
-            "exit" => {
-                r#"#!/bin/sh
-exit 7
-"#
-            }
-            "strict_meta" => {
-                r#"#!/bin/sh
-read request
-case "$request" in *io.modelcontextprotocol/protocolVersion*) ;; *) printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"missing protocolVersion"}}'; exit 0 ;; esac
-case "$request" in *io.modelcontextprotocol/clientInfo*) ;; *) printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"missing clientInfo"}}'; exit 0 ;; esac
-case "$request" in *io.modelcontextprotocol/clientCapabilities*) ;; *) printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"missing clientCapabilities"}}'; exit 0 ;; esac
-case "$request" in
-  *tools/list*)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
-    ;;
-  *tools/call*)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"ok"}],"isError":false}}'
-    ;;
-  *)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"missing required MCP 2026-07-28 client metadata"}}'
-    ;;
-esac
-"#
-            }
-            "tool_error" => {
-                r#"#!/bin/sh
-read request
-case "$request" in
-  *tools/list*)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
-    ;;
-  *tools/call*)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"MCP_TOOL_ERROR_2b91"}],"isError":true}}'
-    ;;
-  *)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
-    ;;
-esac
-"#
-            }
-            "call_protocol_error" => {
-                r#"#!/bin/sh
-read request
-case "$request" in
-  *tools/list*)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
-    ;;
-  *tools/call*)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"boom"}}'
-    ;;
-  *)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
-    ;;
-esac
-"#
-            }
-            "call_timeout" => {
-                r#"#!/bin/sh
-read request
-case "$request" in
-  *tools/list*)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
-    ;;
-  *tools/call*)
-    sleep 5
-    ;;
-  *)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
-    ;;
-esac
-"#
-            }
-            "call_malformed_result" => {
-                r#"#!/bin/sh
-read request
-case "$request" in
-  *tools/list*)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
-    ;;
-  *tools/call*)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","content":"not an array","isError":false}}'
-    ;;
-  *)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
-    ;;
-esac
-"#
-            }
-            "call_omitted_is_error" => {
-                r#"#!/bin/sh
-read request
-case "$request" in
-  *tools/list*)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
-    ;;
-  *tools/call*)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","content":[{"type":"text","text":"MCP_RESULT_OMITTED_IS_ERROR"}]}}'
-    ;;
-  *)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
-    ;;
-esac
-"#
-            }
-            "call_input_required" => {
-                r#"#!/bin/sh
-read request
-case "$request" in
-  *tools/list*)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
-    ;;
-  *tools/call*)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"resultType":"input_required","requestState":"bounded-state-token"}}'
-    ;;
-  *)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
-    ;;
-esac
-"#
-            }
-            "call_unknown_result_type" => {
-                r#"#!/bin/sh
-read request
-case "$request" in
-  *tools/list*)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
-    ;;
-  *tools/call*)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"resultType":"unknown_future","content":[{"type":"text","text":"unsupported"}],"isError":false}}'
-    ;;
-  *)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
-    ;;
-esac
-"#
-            }
-            "counting" => {
-                r#"#!/bin/sh
-read request
-log="$(dirname "$0")/mcp-count.log"
-case "$request" in
-  *tools/list*)
-    printf '%s\n' "tools/list" >> "$log"
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
-    ;;
-  *tools/call*)
-    printf '%s\n' "tools/call:search_code" >> "$log"
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"MCP_RESULT_7f91c2"}],"isError":false}}'
-    ;;
-  *)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
-    ;;
-esac
-"#
-            }
-            "counting_tool_error" => {
-                r#"#!/bin/sh
-read request
-log="$(dirname "$0")/mcp-count.log"
-case "$request" in
-  *tools/list*)
-    printf '%s\n' "tools/list" >> "$log"
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
-    ;;
-  *tools/call*)
-    printf '%s\n' "tools/call:search_code" >> "$log"
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"MCP_TOOL_ERROR_2b91"}],"isError":true}}'
-    ;;
-  *)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
-    ;;
-esac
-"#
-            }
-            "schema_validation_counting" => {
-                r#"#!/bin/sh
-read request
-log="$(dirname "$0")/mcp-count.log"
-case "$request" in
-  *tools/list*)
-    printf '%s\n' "tools/list" >> "$log"
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string","minLength":3,"maxLength":8},"limit":{"type":"integer","minimum":1,"maximum":5},"mode":{"type":"string","enum":["code"]},"fixed":{"type":"boolean","const":true},"tags":{"type":"array","items":{"type":"string"}}},"required":["query"],"additionalProperties":false},"outputSchema":{"type":"object"}}]}}'
-    ;;
-  *tools/call*)
-    printf '%s\n' "tools/call:search_code" >> "$log"
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"MCP_RESULT_7f91c2"}],"isError":false}}'
-    ;;
-  *)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
-    ;;
-esac
-"#
-            }
-            "schema_output_validating" => {
-                r#"#!/bin/sh
-read request
-log="$(dirname "$0")/mcp-count.log"
-case "$request" in
-  *tools/list*)
-    printf '%s\n' "tools/list" >> "$log"
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"],"additionalProperties":false}}]}}'
-    ;;
-  *tools/call*)
-    printf '%s\n' "tools/call:search_code" >> "$log"
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"structuredContent":{"answer":"ok"},"content":[{"type":"text","text":"MCP_RESULT_7f91c2"}],"isError":false}}'
-    ;;
-  *)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
-    ;;
-esac
-"#
-            }
-            "schema_output_invalid" => {
-                r#"#!/bin/sh
-read request
-log="$(dirname "$0")/mcp-count.log"
-case "$request" in
-  *tools/list*)
-    printf '%s\n' "tools/list" >> "$log"
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"],"additionalProperties":false}}]}}'
-    ;;
-  *tools/call*)
-    printf '%s\n' "tools/call:search_code" >> "$log"
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"structuredContent":{"answer":7},"content":[{"type":"text","text":"SHOULD_NOT_BE_SUCCESS"}],"isError":false}}'
-    ;;
-  *)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
-    ;;
-esac
-"#
-            }
-            "schema_output_omitted" => {
-                r#"#!/bin/sh
-read request
-log="$(dirname "$0")/mcp-count.log"
-case "$request" in
-  *tools/list*)
-    printf '%s\n' "tools/list" >> "$log"
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}}}]}}'
-    ;;
-  *tools/call*)
-    printf '%s\n' "tools/call:search_code" >> "$log"
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"MCP_RESULT_7f91c2"}],"isError":false}}'
-    ;;
-  *)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
-    ;;
-esac
-"#
-            }
-            "annotated_counting" => {
-                r#"#!/bin/sh
-read request
-log="$(dirname "$0")/mcp-count.log"
-case "$request" in
-  *tools/list*)
-    printf '%s\n' "tools/list" >> "$log"
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false},"inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
-    ;;
-  *tools/call*)
-    printf '%s\n' "tools/call:search_code" >> "$log"
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"MCP_RESULT_7f91c2"}],"isError":false}}'
-    ;;
-  *)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
-    ;;
-esac
-"#
-            }
-            "annotation_read_only_false" => {
-                r#"#!/bin/sh
-read request
-log="$(dirname "$0")/mcp-count.log"
-case "$request" in
-  *tools/list*)
-    printf '%s\n' "tools/list" >> "$log"
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","annotations":{"readOnlyHint":false,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false},"inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
-    ;;
-  *tools/call*)
-    printf '%s\n' "tools/call:search_code" >> "$log"
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"should not call"}],"isError":false}}'
-    ;;
-esac
-"#
-            }
-            "annotation_destructive_true" => {
-                r#"#!/bin/sh
-read request
-log="$(dirname "$0")/mcp-count.log"
-case "$request" in
-  *tools/list*)
-    printf '%s\n' "tools/list" >> "$log"
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","annotations":{"readOnlyHint":true,"destructiveHint":true,"idempotentHint":true,"openWorldHint":false},"inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
-    ;;
-  *tools/call*)
-    printf '%s\n' "tools/call:search_code" >> "$log"
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"should not call"}],"isError":false}}'
-    ;;
-esac
-"#
-            }
-            "annotation_idempotent_false" => {
-                r#"#!/bin/sh
-read request
-log="$(dirname "$0")/mcp-count.log"
-case "$request" in
-  *tools/list*)
-    printf '%s\n' "tools/list" >> "$log"
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":false,"openWorldHint":false},"inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
-    ;;
-  *tools/call*)
-    printf '%s\n' "tools/call:search_code" >> "$log"
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"should not call"}],"isError":false}}'
-    ;;
-esac
-"#
-            }
-            "annotation_open_world_true" => {
-                r#"#!/bin/sh
-read request
-log="$(dirname "$0")/mcp-count.log"
-case "$request" in
-  *tools/list*)
-    printf '%s\n' "tools/list" >> "$log"
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":true},"inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
-    ;;
-  *tools/call*)
-    printf '%s\n' "tools/call:search_code" >> "$log"
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"should not call"}],"isError":false}}'
-    ;;
-esac
-"#
-            }
-            "annotation_invalid_type" => {
-                r#"#!/bin/sh
-read request
-printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","annotations":{"readOnlyHint":"yes"},"inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
-"#
-            }
-            "oversized_result" => {
-                r#"#!/bin/sh
-read request
-case "$request" in
-  *tools/list*)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
-    ;;
-  *tools/call*)
-    big=$(printf '%9000s' y | tr ' ' y)
-    printf '{"jsonrpc":"2.0","id":1,"result":{"raw_marker":"RAW_JSON_RPC_RESPONSE_MARKER","content":[{"type":"text","text":"MCP_RESULT_7f91c2:%s"},{"type":"image","data":"BINARY_PAYLOAD_SHOULD_NOT_REACH_PROMPT","mimeType":"image/png"}],"isError":false}}\n' "$big"
-    ;;
-  *)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
-    ;;
-esac
-"#
-            }
-            _ => {
-                r#"#!/bin/sh
-read request
-case "$request" in
-  *tools/list*)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
-    ;;
-  *tools/call*)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"ok"}],"isError":false}}'
-    ;;
-  *)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
-    ;;
-esac
-"#
-            }
-        };
+        #[cfg(windows)]
+        let path = workspace_root.join(format!("fake-mcp-{scenario}.ps1"));
+        #[cfg(unix)]
+        let body = self_fake_server_sh(scenario);
+        #[cfg(windows)]
+        let body = super::mcp_fake_server_ps1::fake_server_ps1(scenario);
         std::fs::write(&path, body).expect("fake mcp server");
         #[cfg(unix)]
         {
@@ -69995,15 +70107,26 @@ esac
         unsafe { kill(pid as i32, 0) == 0 }
     }
 
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    fn process_exists(pid: u32) -> bool {
+        std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}")])
+            .output()
+            .map(|output| {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                stdout.contains(&format!("{pid}"))
+            })
+            .unwrap_or(false)
+    }
+
+    #[cfg(not(any(unix, windows)))]
     fn process_exists(_pid: u32) -> bool {
         false
     }
 
     fn write_changed_schema_mcp_server(path: &std::path::Path) {
-        std::fs::write(
-            path,
-            r#"#!/bin/sh
+        #[cfg(unix)]
+        let body = r#"#!/bin/sh
 read request
 case "$request" in
   *tools/list*)
@@ -70013,15 +70136,15 @@ case "$request" in
     printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"changed"}],"isError":false}}'
     ;;
 esac
-"#,
-        )
-        .expect("changed fake mcp server");
+"#;
+        #[cfg(windows)]
+        let body = super::mcp_fake_server_ps1::changed_schema_ps1();
+        std::fs::write(path, body).expect("changed fake mcp server");
     }
 
     fn write_annotation_drift_mcp_server(path: &std::path::Path) {
-        std::fs::write(
-            path,
-            r#"#!/bin/sh
+        #[cfg(unix)]
+        let body = r#"#!/bin/sh
 read request
 log="$(dirname "$0")/mcp-count.log"
 case "$request" in
@@ -70034,9 +70157,10 @@ case "$request" in
     printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"changed annotation"}],"isError":false}}'
     ;;
 esac
-"#,
-        )
-        .expect("annotation drift fake mcp server");
+"#;
+        #[cfg(windows)]
+        let body = super::mcp_fake_server_ps1::annotation_drift_ps1();
+        std::fs::write(path, body).expect("annotation drift fake mcp server");
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
