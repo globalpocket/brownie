@@ -230,7 +230,7 @@
       "crates/brownie-runtime/src/llm_provider.rs",
       "crates/brownie-runtime/src/main.rs",
       "crates/brownie-runtime/src/mcp_client.rs",
-      "crates/brownie-runtime/src/mcp_fake_server_bat.rs",
+      "crates/brownie-runtime/src/mcp_fake_server_ps1.rs",
       "crates/brownie-runtime/src/metadata_privacy.rs",
       "crates/brownie-runtime/src/modepack.rs",
       "crates/brownie-runtime/src/objective_proposal.rs",
@@ -278,7 +278,7 @@
       "scripts/guard-runtime-release-readiness.mjs",
       "scripts/rrp3-process-loss-recovery-e2e.mjs"
     ],
-    "tracked_fingerprint": "sha256:4a85a92780597419dda46064837edfa72f49cd24be79542769c4790bbba584a1",
+    "tracked_fingerprint": "sha256:b55444b93f3f0fdf0fce95fd4a59dfb62dc213bc7ddf1bcc26d37663bb73acca",
     "status": "implemented_sufficient"
   },
   "owner_decisions": [

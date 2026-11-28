@@ -615,7 +615,7 @@ const MAX_TASK_LIST_TRANSPORT_EDGES: usize = 400;
 
 #[cfg(test)]
 #[allow(dead_code)]
-mod mcp_fake_server_bat;
+mod mcp_fake_server_ps1;
 
 pub fn runtime_status() -> RuntimeStatus {
     RuntimeStatus {
@@ -69462,7 +69462,7 @@ content-length: {}
 
     fn mcp_command_and_args(server_command: &str) -> (String, Vec<String>) {
         // On Unix, the .sh script is directly executable.
-        // On Windows, the .bat script is executed via cmd.exe.
+        // On Windows, the .ps1 script is executed via powershell.exe.
         #[cfg(unix)]
         {
             (server_command.to_string(), Vec::new())
@@ -69470,8 +69470,14 @@ content-length: {}
         #[cfg(windows)]
         {
             (
-                "C:\\Windows\\System32\\cmd.exe".to_string(),
-                vec!["/c".to_string(), server_command.to_string()],
+                "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe".to_string(),
+                vec![
+                    "-NoProfile".to_string(),
+                    "-ExecutionPolicy".to_string(),
+                    "Bypass".to_string(),
+                    "-File".to_string(),
+                    server_command.to_string(),
+                ],
             )
         }
     }
@@ -70077,11 +70083,11 @@ esac
         #[cfg(unix)]
         let path = workspace_root.join(format!("fake-mcp-{scenario}.sh"));
         #[cfg(windows)]
-        let path = workspace_root.join(format!("fake-mcp-{scenario}.bat"));
+        let path = workspace_root.join(format!("fake-mcp-{scenario}.ps1"));
         #[cfg(unix)]
         let body = self_fake_server_sh(scenario);
         #[cfg(windows)]
-        let body = super::mcp_fake_server_bat::fake_server_bat(scenario);
+        let body = super::mcp_fake_server_ps1::fake_server_ps1(scenario);
         std::fs::write(&path, body).expect("fake mcp server");
         #[cfg(unix)]
         {
@@ -70132,7 +70138,7 @@ case "$request" in
 esac
 "#;
         #[cfg(windows)]
-        let body = "@echo off\r\nset /p request=\r\nset \"req=%request%\"\r\nif \"%req%\"==*tools/list* (echo {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[{\"name\":\"search_code\",\"description\":\"changed\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"changed\":{\"type\":\"boolean\"}}}}]}}& exit /b 0)\r\nif \"%req%\"==*tools/call* (echo {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"changed\"}],\"isError\":false}}& exit /b 0)\r\n";
+        let body = super::mcp_fake_server_ps1::changed_schema_ps1();
         std::fs::write(path, body).expect("changed fake mcp server");
     }
 
@@ -70153,7 +70159,7 @@ case "$request" in
 esac
 "#;
         #[cfg(windows)]
-        let body = "@echo off\r\nset /p request=\r\nset \"req=%request%\"\r\nset \"log=%~dp0mcp-count.log\"\r\nif \"%req%\"==*tools/list* (echo tools/list>> \"%log%\"& echo {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[{\"name\":\"search_code\",\"description\":\"catalog text is not authority\",\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":true,\"openWorldHint\":false},\"inputSchema\":{\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\"}}},\"outputSchema\":{\"type\":\"object\"}}]}}& exit /b 0)\r\nif \"%req%\"==*tools/call* (echo tools/call:search_code>> \"%log%\"& echo {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"changed annotation\"}],\"isError\":false}}& exit /b 0)\r\n";
+        let body = super::mcp_fake_server_ps1::annotation_drift_ps1();
         std::fs::write(path, body).expect("annotation drift fake mcp server");
         #[cfg(unix)]
         {
