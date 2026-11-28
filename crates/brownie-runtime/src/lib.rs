@@ -613,6 +613,8 @@ const MAX_TASK_LIST_TRANSPORT_ROUTE_CANDIDATES: usize = 50;
 const MAX_TASK_LIST_TRANSPORT_NODES: usize = 200;
 const MAX_TASK_LIST_TRANSPORT_EDGES: usize = 400;
 
+#[cfg(test)]
+#[allow(dead_code)]
 mod mcp_fake_server_bat;
 
 pub fn runtime_status() -> RuntimeStatus {
